@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-<title>一次関数トランプ v40（改良版）</title>
+<title>一次関数トランプ v41（改良版）</title>
 <!-- PWA対応 -->
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#001428">
@@ -103,7 +103,7 @@
 </style>
 </head>
 <body>
-<h1>一次関数トランプ v40（改良版）</h1>
+<h1>一次関数トランプ v41（改良版）</h1>
 <div id="homeScreen" style="display:flex;flex-direction:column;align-items:center;margin-top:10px;">
   <div class="container-box">
     <div style="font-size:20px;font-weight:700;margin-bottom:6px;">モード・ペア数・CPU強さを選んで ▶ ゲーム開始</div>
@@ -118,6 +118,7 @@
     </div>
     <div style="margin-top:16px;">
       <div style="font-size:18px;font-weight:700;">CPU の強さ</div>
+      <button id="cpuSuperWeak" onclick="setCPU('superweak')" style="margin-right:6px;">最弱</button>
       <button id="cpuWeak" onclick="setCPU('weak')">弱</button>
       <button id="cpuNormal" onclick="setCPU('normal')" style="margin-left:6px;">普通</button>
       <button id="cpuStrong" onclick="setCPU('strong')" style="margin-left:6px;">強</button>
@@ -247,6 +248,7 @@ let babaHands = [];
 let ownSelected = [];
 let usedFunctionsSet = new Set();
 let graphScale = 1;
+let matchModalOpen = false; // ← 追加：マッチモーダル開閉フラグ
 
 const homeScreen = document.getElementById('homeScreen');
 const gameContainer = document.getElementById('gameContainer');
@@ -297,13 +299,16 @@ function selectMode(m){
   if(mAbb) mAbb.style.opacity=(m==='babanuki'?1:0.6);
 }
 function setCPU(level){
-  selectedCPUStrength=level;
+  selectedCPUStrength = level;
+  const cSW = document.getElementById('cpuSuperWeak');
   const cW = document.getElementById('cpuWeak');
   const cN = document.getElementById('cpuNormal');
   const cS = document.getElementById('cpuStrong');
-  if(cW) cW.style.opacity=(level==='weak'?1:0.6);
-  if(cN) cN.style.opacity=(level==='normal'?1:0.6);
-  if(cS) cS.style.opacity=(level==='strong'?1:0.6);
+
+  if(cSW) cSW.style.opacity = (level==='superweak'?1:0.6);
+  if(cW)  cW.style.opacity  = (level==='weak'?1:0.6);
+  if(cN)  cN.style.opacity  = (level==='normal'?1:0.6);
+  if(cS)  cS.style.opacity  = (level==='strong'?1:0.6);
 }
 function startGameFromHome(){
   const pairInput = document.getElementById('pairInput');
@@ -355,6 +360,7 @@ function renderSetupPlayers(n){
         <option value="weak">弱</option>
         <option value="normal">普通</option>
         <option value="strong">強</option>
+        <option value="superweak">最弱</option>
       </select>
     `;
     if(setupPlayersList) setupPlayersList.appendChild(row);
@@ -489,7 +495,7 @@ function revealCardMemory(idx){
       }
       updateTurnDisplay();
       startTurnTimer();
-      if(playerConfig[turnIndex] && playerConfig[turnIndex].type==='cpu') setTimeout(cpuPlayMemory,350);
+      // CPU の自動再開は closeMatchModal で処理するため、ここでは直接呼ばない
     },400);
   } else {
     setTimeout(()=>{
@@ -513,21 +519,31 @@ function addLearned(card){
   if(learnedDiv) learnedDiv.appendChild(div);
 }
 function cpuPlayMemory(){
+  if(matchModalOpen) return; // マッチモーダルが開いていたら動かない
   const cpu = playerConfig[turnIndex] || {type:'cpu', strength:'normal'};
-  const baseWait = (cpu.strength==='strong')?350:(cpu.strength==='weak'?700:500);
+  const baseWait =
+    cpu.strength==='strong' ? 350 :
+    cpu.strength==='normal' ? 500 :
+    cpu.strength==='weak'   ? 700 :
+    cpu.strength==='superweak' ? 1200 :
+    600;
   setTimeout(()=>{
+    if(matchModalOpen) return;
     if(disableClicks) return;
 
     let pick1=null, pick2=null;
-    for(const k of Object.keys(cpuMemory)){
-      const arr = Array.from(cpuMemory[k]).filter(ix=>{
-        const el=document.querySelector(`.card[data-index='${ix}']`);
-        return el && !el.classList.contains('matched');
-      });
-      if(arr.length>=2){
-        pick1=arr[0];
-        pick2=arr[1];
-        break;
+    // superweak は記憶を活用しない
+    if(cpu.strength!=='superweak'){
+      for(const k of Object.keys(cpuMemory)){
+        const arr = Array.from(cpuMemory[k]).filter(ix=>{
+          const el=document.querySelector(`.card[data-index='${ix}']`);
+          return el && !el.classList.contains('matched');
+        });
+        if(arr.length>=2){
+          pick1=arr[0];
+          pick2=arr[1];
+          break;
+        }
       }
     }
 
@@ -536,7 +552,7 @@ function cpuPlayMemory(){
       if(available.length===0) return;
       pick1=available[randInt(available.length)];
 
-      if(cpu.strength==='strong'){
+      if(cpu.strength==='strong' && cpu.strength!=='superweak'){
         const firstCard = deckCards[pick1];
         const key = `${firstCard.a},${firstCard.b}`;
         const knownMatch = Array.from(cpuMemory[key]||[]).find(ix=>ix!==pick1 && !document.querySelector(`.card[data-index='${ix}']`)?.classList.contains('matched'));
@@ -544,6 +560,7 @@ function cpuPlayMemory(){
       }
       if(pick2===null){
         setTimeout(()=>{
+          if(matchModalOpen) return;
           if(disableClicks) return;
           revealCardMemory(pick1);
           setTimeout(()=>{
@@ -753,10 +770,17 @@ function humanDrawFrom(ti){
 }
 
 function cpuPlayBaba(){
+  if(matchModalOpen) return; // マッチモーダル中は停止
   const cpu = playerConfig[turnIndex];
-  const waitTime = (cpu.strength==='strong')?700:(cpu.strength==='weak'?1500:1000);
+  const waitTime =
+    cpu.strength==='strong' ? 700 :
+    cpu.strength==='normal' ? 1000 :
+    cpu.strength==='weak' ? 1500 :
+    cpu.strength==='superweak' ? 2200 :
+    1000;
 
   setTimeout(()=>{
+    if(matchModalOpen) return;
     const targetIdx = (turnIndex + 1) % players;
     let currentTarget = targetIdx;
     while(babaHands[currentTarget].length === 0 && currentTarget !== turnIndex){
@@ -832,6 +856,7 @@ function showGraphLarge(card){
   const title = document.getElementById('graphTitle');
   if(title) title.textContent = `グラフ: ${formatEq(card.a, card.b)}`;
   graphScale = 1;
+  graphModal.graphCard = card;
   drawGraph(card);
 }
 function drawGraph(card){
@@ -911,10 +936,23 @@ function showMatchModal(card){
   matchModal.style.display='flex';
   matchModal.graphCard = card;
   document.getElementById('matchTitle').textContent = 'ペア成立: ' + formatEq(card.a, card.b);
+  matchModalOpen = true; // ← モーダル開いたらフラグを立てる
   showMatchTab('formula');
 }
 function closeMatchModal(){
-  if(matchModal) matchModal.style.display='none';
+  if(matchModal){
+    matchModal.style.display='none';
+  }
+  matchModalOpen = false;
+
+  // CPU のターンなら再開
+  if(playerConfig[turnIndex] && playerConfig[turnIndex].type==='cpu'){
+    if(mode === 'memory'){
+      setTimeout(cpuPlayMemory, 400);
+    } else {
+      setTimeout(cpuPlayBaba, 400);
+    }
+  }
 }
 function showMatchTab(tab){
   if(!matchContent || !matchModal.graphCard) return;
