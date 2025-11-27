@@ -1,12 +1,11 @@
-
 <!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-<title>一次関数トランプ v40（改良版）</title>
+<title>一次関数トランプ v40（改良版・修正版）</title>
 <!-- PWA対応 -->
-<link rel="manifest" href="manifest.json">
+<link rel="manifest" href="./manifest.json">
 <meta name="theme-color" content="#001428">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -104,7 +103,7 @@
 </style>
 </head>
 <body>
-<h1>一次関数トランプ v40（改良版）</h1>
+<h1>一次関数トランプ v40（改良版・修正版）</h1>
 <div id="homeScreen" style="display:flex;flex-direction:column;align-items:center;margin-top:10px;">
   <div class="container-box">
     <div style="font-size:20px;font-weight:700;margin-bottom:6px;">モード・ペア数・CPU強さを選んで ▶ ゲーム開始</div>
@@ -218,7 +217,7 @@
 
 <!-- PWAインストールボタン -->
 <button id="installPwaBtn" class="install-pwa-btn">ホーム画面に追加</button>
-<!-- =============== ここからJS本体オールインワン =============== -->
+<!-- =============== ここからJS本体オールインワン（修正版） =============== -->
 <script>
 let deferredPrompt;
 const installBtn = document.getElementById('installPwaBtn');
@@ -236,6 +235,7 @@ if(installBtn) installBtn.addEventListener('click', async () => {
   }
 });
 if('serviceWorker' in navigator){
+  // service-worker.js は無い場合もあるので失敗しても問題ないようにcatchしておく
   navigator.serviceWorker.register('./service-worker.js')
   .then(()=>console.log('SW registered'))
   .catch(()=>console.log('SW registration failed'));
@@ -570,97 +570,77 @@ function addLearned(card){
   if(learnedDiv) learnedDiv.appendChild(div);
 }
 
+async function cpuFlipMemory(idx){
+  revealCardMemory(idx,true);
+  const c = deckCards[idx];
+  showCpuCard(c);
+  await waitCpuStop();
+}
+
+// ---- 正常な cpuPlayMemory（一本化・安定版） ----
 async function cpuPlayMemory(){
   const cpu = playerConfig[turnIndex];
+  if(!cpu) return;
   const param = getCpuParams(cpu.strength || selectedCPUStrength);
 
+  // 思考時間
   await new Promise(r=>setTimeout(r,param.delay));
   if(disableClicks) return;
 
-  let pick1=null, pick2=null;
-  const memChance = param.memory;
-
-  if(Math.random() < memChance){
+  // メモリ優先で既知のペアがあるか探す
+  let pick1 = null, pick2 = null;
+  if(Math.random() < param.memory){
     for(const k of Object.keys(cpuMemory)){
       const arr = Array.from(cpuMemory[k]).filter(ix=>{
-        const el=document.querySelector(`.card[data-index='${ix}']`);
-        return el && !el.classList.contains('matched');
+        const el = document.querySelector(`.card[data-index='${ix}']`);
+        return el && !el.classList.contains('matched') && !el.classList.contains('flipped');
       });
-      if(arr.length>=2){ pick1=arr[0]; pick2=arr[1]; break; }
+      if(arr.length >= 2){
+        pick1 = arr[0];
+        pick2 = arr[1];
+        break;
+      }
     }
   }
 
-  if(pick1===null){
-    const available = Array.from(document.querySelectorAll('.card')).map((d,i)=>(!d.classList.contains('matched')&&!d.classList.contains('flipped'))?i:null).filter(x=>x!==null);
-    if(available.length===0) return;
-    pick1 = available[randInt(available.length)];
+  // もし見つからなければランダム
+  const available = Array.from(document.querySelectorAll('.card')).map((d,i)=>(!d.classList.contains('matched')&&!d.classList.contains('flipped'))?i:null).filter(x=>x!==null);
+  if(available.length === 0) return;
+  if(pick1 === null) pick1 = available[randInt(available.length)];
+
+  // 強いCPUは1枚めを見て対応する既知のカードがあれば2枚目にすることがある
+  if(pick2 === null && cpu.strength === 'strong'){
+    const firstCard = deckCards[pick1];
+    const key = `${firstCard.a},${firstCard.b}`;
+    const known = Array.from(cpuMemory[key]||[]).find(ix=>ix!==pick1 && !document.querySelector(`.card[data-index='${ix}']`)?.classList.contains('matched') && !document.querySelector(`.card[data-index='${ix}']`)?.classList.contains('flipped'));
+    if(known !== undefined) pick2 = known;
   }
 
-  await cpuFlipMemory(pick1);
-  await new Promise(r=>setTimeout(r,param.delay));
-
-  if(!pick2){
-    const available2 = Array.from(document.querySelectorAll('.card')).map((d,i)=>(!d.classList.contains('matched')&&!d.classList.contains('flipped') && i!==pick1)?i:null).filter(x=>x!==null);
-    if(available2.length===0){
+  // 決定：もしまだpick2がなければランダムで別のカードを選ぶ
+  if(pick2 === null){
+    const avail2 = Array.from(document.querySelectorAll('.card')).map((d,i)=>(!d.classList.contains('matched')&&!d.classList.contains('flipped') && i!==pick1)?i:null).filter(x=>x!==null);
+    if(avail2.length === 0){
+      // 2枚目が引けないならターンを終了
       turnIndex = (turnIndex+1)%players;
       updateTurnDisplay();
       startTurnTimer();
       if(playerConfig[turnIndex] && playerConfig[turnIndex].type==='cpu') setTimeout(cpuPlayMemory,400);
       return;
     }
-    pick2 = available2[randInt(available2.length)];
+    pick2 = avail2[randInt(avail2.length)];
   }
 
-  await cpuFlipMemory(pick2);
-}
-    if(pick1===null){
-      const available = Array.from(document.querySelectorAll('.card')).map((d,i)=>(!d.classList.contains('matched')&&!d.classList.contains('flipped'))?i:null).filter(x=>x!==null);
-      if(available.length===0) return;
-      pick1=available[randInt(available.length)];
-
-      if(cpu.strength==='strong'){
-        const firstCard = deckCards[pick1];
-        const key = `${firstCard.a},${firstCard.b}`;
-        const knownMatch = Array.from(cpuMemory[key]||[]).find(ix=>ix!==pick1 && !document.querySelector(`.card[data-index='${ix}']`)?.classList.contains('matched'));
-        if(knownMatch !== undefined) pick2 = knownMatch;
-      }
-      if(pick2===null){
-        setTimeout(()=>{
-          if(disableClicks) return;
-          revealCardMemory(pick1);
-          setTimeout(()=>{
-            const available2 = Array.from(document.querySelectorAll('.card')).map((d,i)=>(!d.classList.contains('matched')&&!d.classList.contains('flipped') && i!==pick1)?i:null).filter(x=>x!==null);
-            if(available2.length===0){
-              turnIndex = (turnIndex+1)%players;
-              updateTurnDisplay();
-              startTurnTimer();
-              if(playerConfig[turnIndex]&&playerConfig[turnIndex].type==='cpu') setTimeout(cpuPlayMemory,400);
-              return;
-            }
-            revealCardMemory(available2[randInt(available2.length)]);
-          },baseWait);
-        },baseWait);
-      } else {
-        setTimeout(()=>{
-          revealCardMemory(pick1);
-          setTimeout(()=>revealCardMemory(pick2), baseWait);
-        },baseWait);
-      }
-    } else {
-      setTimeout(()=>{
-        revealCardMemory(pick1);
-        setTimeout(()=>revealCardMemory(pick2), baseWait);
-      },baseWait);
-    }
-  },baseWait);
-}
-
-
-async function cpuFlipMemory(idx){
-  revealCardMemory(idx,true);
-  const c = deckCards[idx];
-  showCpuCard(c);
+  // めくる（CPU専用モーダル表示を挟む）
+  revealCardMemory(pick1, true);
+  showCpuCard(deckCards[pick1]);
   await waitCpuStop();
+  await new Promise(r=>setTimeout(r, Math.max(150, param.delay/2)));
+
+  // 2枚目
+  revealCardMemory(pick2, true);
+  showCpuCard(deckCards[pick2]);
+  await waitCpuStop();
+  // revealCardMemory の内部で一致判定・ターン操作が行われるため、ここでは追加のロジックは不要。
 }
 
 // -- ババ抜き --
@@ -699,7 +679,10 @@ function startBabanuki(pairCount){
   });
   renderBabaUI();
   startTurnTimer();
-  nextTurn();
+  // CPU が先攻なら最初の CPU を動かす
+  if(playerConfig[turnIndex] && playerConfig[turnIndex].type==='cpu') {
+    setTimeout(cpuPlayBaba, 600);
+  }
 }
 
 function renderBabaUI(){
@@ -842,15 +825,18 @@ function humanDrawFrom(ti){
   }, 1000);
 }
 
-
 async function cpuPlayBaba(){
   const cpu = playerConfig[turnIndex];
+  if(!cpu) { nextTurn(); return; }
   const param = getCpuParams(cpu.strength || selectedCPUStrength);
   await new Promise(r=>setTimeout(r,param.delay));
-  const playersCount = players;
+  if(disableClicks) return;
+
+  // 相手を見つける（次のプレイヤーを順に）
+  let playersCount = players;
   let targetIdx = (turnIndex+1)%playersCount;
-  let cnt=0;
-  while((!babaHands[targetIdx] || babaHands[targetIdx].length===0) && cnt<playersCount){
+  let cnt = 0;
+  while((!babaHands[targetIdx] || babaHands[targetIdx].length===0) && cnt < playersCount){
     targetIdx = (targetIdx+1)%playersCount; cnt++;
   }
   if(!babaHands[targetIdx] || babaHands[targetIdx].length===0){
@@ -874,25 +860,6 @@ async function cpuPlayBaba(){
     showMatchModal(c1);
   }
   nextTurn();
-}
-    const targetHand = babaHands[currentTarget];
-    const pickIdx = randInt(targetHand.length);
-    const drawn = targetHand.splice(pickIdx, 1)[0];
-    babaHands[turnIndex].push(drawn);
-
-    renderBabaUI();
-
-    setTimeout(()=>{
-      const pair = findFirstPairInHand(babaHands[turnIndex]);
-      if(pair){
-        const ids=[pair.i,pair.j].sort((a,b)=>b-a);
-        const c1 = babaHands[turnIndex][ids[0]];
-        ids.forEach(ix=>babaHands[turnIndex].splice(ix,1));
-        showMatchModal(c1);
-      }
-      nextTurn();
-    }, waitTime);
-  }, waitTime);
 }
 
 function findFirstPairInHand(h){
@@ -936,7 +903,7 @@ function nextTurn(){
   renderBabaUI();
   startTurnTimer();
   if(playerConfig[turnIndex] && playerConfig[turnIndex].type==='cpu'){
-    cpuPlayBaba();
+    setTimeout(cpuPlayBaba, 500);
   }
 }
 function showGraphLarge(card){
@@ -945,6 +912,7 @@ function showGraphLarge(card){
   const title = document.getElementById('graphTitle');
   if(title) title.textContent = `グラフ: ${formatEq(card.a, card.b)}`;
   graphScale = 1;
+  graphModal.graphCard = card;
   drawGraph(card);
 }
 function drawGraph(card){
@@ -1015,8 +983,7 @@ function zoomGraph(s){
       drawGraph(matchModal.graphCard);
     }
   }else if(graphModal.style.display==='flex'){
-    const title = document.getElementById('graphTitle');
-    if(title && graphModal.graphCard) drawGraph(graphModal.graphCard);
+    if(graphModal.graphCard) drawGraph(graphModal.graphCard);
   }
 }
 function showMatchModal(card){
