@@ -208,7 +208,6 @@
 <button id="installPwaBtn" class="install-pwa-btn">ホーム画面に追加</button>
 <!-- =============== ここからJS本体オールインワン =============== -->
 <script>
-/* PWAインストール/Service Worker */
 let deferredPrompt;
 const installBtn = document.getElementById('installPwaBtn');
 window.addEventListener('beforeinstallprompt', (e) => {
@@ -229,16 +228,11 @@ if('serviceWorker' in navigator){
   .then(()=>console.log('SW registered'))
   .catch(()=>console.log('SW registration failed'));
 }
-
-/* ============ ゲーム本体のコード開始 ============ */
-
-/* ---------------------------
-   グローバル変数・初期値
-----------------------------*/
+// ====== ゲーム本体のコード開始 =======
 let mode = null;
 let players = 2;
 let playerConfig = [];
-let deckCards = []; // for memory or base pool
+let deckCards = [];
 let firstFlip = null;
 let scores = [];
 let turnIndex = 0;
@@ -254,9 +248,6 @@ let ownSelected = [];
 let usedFunctionsSet = new Set();
 let graphScale = 1;
 
-/* ---------------------------
-   element refs
-----------------------------*/
 const homeScreen = document.getElementById('homeScreen');
 const gameContainer = document.getElementById('gameContainer');
 const cardArea = document.getElementById('cardArea');
@@ -273,9 +264,6 @@ const resultModal = document.getElementById('resultModal');
 const resultScores = document.getElementById('resultScores');
 const usedFunctionsList = document.getElementById('usedFunctionsList');
 
-/* ---------------------------
-   util functions
-----------------------------*/
 function randInt(n){ return Math.floor(Math.random()*n); }
 function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=randInt(i+1); [a[i],a[j]]=[a[j],a[i]]; } return a; }
 function formatEq(a,b){
@@ -284,17 +272,11 @@ function formatEq(a,b){
   return `y=${aText}${b>0?"+":""}${b}`;
 }
 function formatNumber(v){ return Number.isInteger(v)?String(v):(Math.round(v*10)/10).toFixed(1); }
-
-/* ---------------------------
-   makeTableHTML (修正: 横向き表示に変更)
-----------------------------*/
 function makeTableHTML(a,b){
   const xValues=[-2, -1, 0, 1, 2];
   const yValues=xValues.map(x=>a*x+b);
-
   const xRow = xValues.map(x=>`<td>${x}</td>`).join('');
   const yRow = yValues.map(y=>`<td>${formatNumber(y)}</td>`).join('');
-
   return `
     <div class="table-card">
       <div class="title">対応表</div>
@@ -306,9 +288,7 @@ function makeTableHTML(a,b){
   `;
 }
 
-/* ---------------------------
-   Home controls
-----------------------------*/
+// ----- ホーム画面・セットアップ関連 -----
 function selectMode(m){
   chosenMode=m;
   const mEmb = document.getElementById('modeMemoryBtn');
@@ -349,9 +329,7 @@ function startGameFromHome(){
 
   updateTurnDisplay();
 }
-/* ---------------------------
-   Setup modal
-----------------------------*/
+
 function openSetup(){ 
   if(setupModal) setupModal.style.display='flex'; 
   const setupCount = document.getElementById('setupCount');
@@ -402,9 +380,8 @@ function applySetup(){
   closeSetup();
   updateTurnDisplay();
 }
-/* ---------------------------
-   MEMORY（神経衰弱）
-----------------------------*/
+
+// ----- 神経衰弱（MEMORY） -----
 function startMemory(pairCount){
   deckCards=[]; firstFlip=null; scores=Array(players).fill(0); turnIndex=0; cpuMemory={}; disableClicks=false;
   const pool=[];
@@ -414,7 +391,7 @@ function startMemory(pairCount){
   selected.forEach(s=>{
     const types=['formula','detail','graph','table'];
     const t1=types[randInt(types.length)];
-    let t2=types[randInt(types.length)]; // ← 修正: let に変更（再代入するため）
+    let t2=types[randInt(types.length)];
     while(t2===t1) t2=types[randInt(types.length)];
     deckCards.push({a:s.a,b:s.b,type:t1});
     deckCards.push({a:s.a,b:s.b,type:t2});
@@ -426,7 +403,6 @@ function startMemory(pairCount){
   startTurnTimer();
   if(playerConfig[turnIndex] && playerConfig[turnIndex].type==='cpu') setTimeout(cpuPlayMemory,400);
 }
-
 function renderMemoryTable(){
   if(cardArea) cardArea.innerHTML='';
   const grid = document.createElement('div'); grid.className='card-grid';
@@ -440,26 +416,20 @@ function renderMemoryTable(){
     else if(c.type==='graph') { back.innerHTML=`<div style="font-weight:700">📈 グラフ</div>`; }
     else if(c.type==='table') back.innerHTML = makeTableHTML(c.a,c.b);
     inner.appendChild(front); inner.appendChild(back); wrap.appendChild(inner); grid.appendChild(wrap);
-    
-    // 💡 修正: グラフカードをクリックしたときの処理を修正し、裏返ったままにならないようにする
+
     wrap.addEventListener('click', ()=> {
       if(disableClicks) return;
       if(wrap.classList.contains('matched') || wrap.classList.contains('flipped')) return;
 
       if(c.type==='graph'){ 
-        // グラフを表示
         wrap.classList.add('flipped');
         showGraphLarge(c);
-        
-        // 1.2秒後に自動的に裏返す
         setTimeout(() => {
             wrap.classList.remove('flipped');
-            // 既に1枚目が開いている場合はそれを裏に戻し、ターンを終了
             if(firstFlip !== null){
                 const firstCardEl = document.querySelector(`.card[data-index='${firstFlip}']`);
                 if(firstCardEl) firstCardEl.classList.remove('flipped');
                 firstFlip = null;
-                
                 turnIndex = (turnIndex+1)%players;
                 updateTurnDisplay();
                 startTurnTimer();
@@ -467,16 +437,15 @@ function renderMemoryTable(){
             }
             disableClicks = false;
         }, 1200);
-        disableClicks = true; // 処理中はクリックを無効化
-
+        disableClicks = true;
       } else {
-        // 通常のカード選択ロジック
         onCardClickedMemory(idx);
       }
     });
   });
   if(cardArea) cardArea.appendChild(grid);
 }
+
 function onCardClickedMemory(idx){
   if(disableClicks) return;
   const card = document.querySelector(`.card[data-index='${idx}']`);
@@ -511,7 +480,6 @@ function revealCardMemory(idx){
       scores[turnIndex] = (scores[turnIndex]||0) + 1;
       remainingPairs--;
       addLearned(first);
-      // show match modal with big view (formula/table/graph)
       showMatchModal(first);
       firstFlip=null;
       disableClicks=false;
@@ -535,18 +503,15 @@ function revealCardMemory(idx){
       updateTurnDisplay();
       startTurnTimer();
       if(playerConfig[turnIndex] && playerConfig[turnIndex].type==='cpu') setTimeout(cpuPlayMemory,400);
-    },900);
+    },5000); // ← ここを5000msにしています
   }
 }
-
 function addLearned(card){
   const text = formatEq(card.a, card.b);
   const div = document.createElement('div');
   div.textContent=text;
   if(learnedDiv) learnedDiv.appendChild(div);
 }
-
-/* CPU memory / play */
 function cpuPlayMemory(){
   const cpu = playerConfig[turnIndex] || {type:'cpu', strength:'normal'};
   const baseWait = (cpu.strength==='strong')?350:(cpu.strength==='weak'?700:500);
@@ -554,7 +519,6 @@ function cpuPlayMemory(){
     if(disableClicks) return;
 
     let pick1=null, pick2=null;
-    // try find known pair in memory
     for(const k of Object.keys(cpuMemory)){
       const arr = Array.from(cpuMemory[k]).filter(ix=>{
         const el=document.querySelector(`.card[data-index='${ix}']`);
@@ -568,25 +532,20 @@ function cpuPlayMemory(){
     }
 
     if(pick1===null){
-      // pick 1st card randomly
       const available = Array.from(document.querySelectorAll('.card')).map((d,i)=>(!d.classList.contains('matched')&&!d.classList.contains('flipped'))?i:null).filter(x=>x!==null);
       if(available.length===0) return;
       pick1=available[randInt(available.length)];
 
-      // Strong CPU: use memory to find 2nd card
       if(cpu.strength==='strong'){
         const firstCard = deckCards[pick1];
         const key = `${firstCard.a},${firstCard.b}`;
         const knownMatch = Array.from(cpuMemory[key]||[]).find(ix=>ix!==pick1 && !document.querySelector(`.card[data-index='${ix}']`)?.classList.contains('matched'));
         if(knownMatch !== undefined) pick2 = knownMatch;
       }
-      
-      // If 2nd card still null, pick randomly
       if(pick2===null){
         setTimeout(()=>{
           if(disableClicks) return;
           revealCardMemory(pick1);
-          
           setTimeout(()=>{
             const available2 = Array.from(document.querySelectorAll('.card')).map((d,i)=>(!d.classList.contains('matched')&&!d.classList.contains('flipped') && i!==pick1)?i:null).filter(x=>x!==null);
             if(available2.length===0){
@@ -600,14 +559,12 @@ function cpuPlayMemory(){
           },baseWait);
         },baseWait);
       } else {
-        // Strong CPU found a match immediately
         setTimeout(()=>{
           revealCardMemory(pick1);
           setTimeout(()=>revealCardMemory(pick2), baseWait);
         },baseWait);
       }
     } else {
-      // CPU found a known pair
       setTimeout(()=>{
         revealCardMemory(pick1);
         setTimeout(()=>revealCardMemory(pick2), baseWait);
@@ -616,9 +573,7 @@ function cpuPlayMemory(){
   },baseWait);
 }
 
-/* ---------------------------
-   BABA (ババ抜き) 改良版（円形UI）
-----------------------------*/
+// -- ババ抜き --
 function startBabanuki(pairCount){
   deckCards=[]; scores=Array(players).fill(0); turnIndex=0; ownSelected=[]; disableClicks=false;
   const pool=[];
@@ -640,8 +595,6 @@ function startBabanuki(pairCount){
   babaHands = Array.from({length:players},()=>[]);
   let i=0;
   while(deck.length) { babaHands[i%players].push(deck.pop()); i++; }
-
-  // 最初に手札をチェックしてペアを捨てる
   babaHands.forEach(hand => {
     let discarded = true;
     while(discarded){
@@ -654,7 +607,6 @@ function startBabanuki(pairCount){
       }
     }
   });
-
   renderBabaUI();
   startTurnTimer();
   nextTurn();
@@ -673,7 +625,6 @@ function renderBabaUI(){
     const angle = (Math.PI*2)/players * i - Math.PI/2;
     const x = cx + radiusX * Math.cos(angle);
     const y = cy + radiusY * Math.sin(angle);
-    
     const slot = document.createElement('div');
     slot.className=`player-slot ${i===turnIndex?'current':''}`;
     slot.style.left=`${x-60}px`;
@@ -686,8 +637,6 @@ function renderBabaUI(){
       <div class="small">手札: ${babaHands[i]?.length || 0}枚</div>
     `;
     slot.appendChild(panel);
-    
-    // 現在のターンで、かつ人間プレイヤーの場合、捨てるボタンと手札を表示
     if(i === turnIndex && playerConfig[i].type==='human'){
       const handRow = document.createElement('div');
       handRow.className='hand-row';
@@ -699,7 +648,6 @@ function renderBabaUI(){
         handRow.appendChild(card);
       });
       panel.appendChild(handRow);
-      
       const discardArea = document.createElement('div');
       discardArea.style.marginTop='10px';
       const discardBtn = document.createElement('button');
@@ -707,45 +655,37 @@ function renderBabaUI(){
       discardBtn.onclick=()=>confirmDiscard();
       discardArea.appendChild(discardBtn);
       panel.appendChild(discardArea);
-      
     } else if(i !== turnIndex && playerConfig[turnIndex] && playerConfig[turnIndex].type==='human'){
-      // 人間プレイヤーのターンで、他のプレイヤーの手札にドローボタン
       const drawBtn = document.createElement('button');
       drawBtn.className='draw-btn';
       drawBtn.textContent='このプレイヤーから引く';
       drawBtn.onclick=()=>humanDrawFrom(i);
       panel.appendChild(drawBtn);
     }
-    
     circle.appendChild(slot);
   }
 
   container.appendChild(circle);
   if(cardArea) cardArea.appendChild(container);
-
   updateTurnDisplay();
 }
-/* when human clicks their own card */
+
 function onOwnCardClick(pi,hi){
   if(pi !== turnIndex) return;
   if(!(playerConfig[pi] && playerConfig[pi].type==='human')) return;
   const hand = babaHands[pi];
   if(!hand || !hand[hi]) return;
 
-  // toggle selection for this index among current hand cards
-  const foundIndex = ownSelected.findIndex(s=>s.hi===hi); // only check hi since pi is current turnIndex
-
+  const foundIndex = ownSelected.findIndex(s=>s.hi===hi);
   if(foundIndex !== -1){
     ownSelected.splice(foundIndex, 1);
   } else {
     ownSelected.push({pi,hi});
     if(ownSelected.length>2) ownSelected.shift();
   }
-
   renderBabaUI();
 }
 
-/* confirm discard (human) */
 function confirmDiscard(){
   if(ownSelected.length<2){
     alert('捨てる2枚を選択してください');
@@ -763,7 +703,6 @@ function confirmDiscard(){
   }
 
   if(c1.a===c2.a && c1.b===c2.b && c1.a!==null){
-    // remove both (splice careful with indexes)
     const ids = [aIdx,bIdx].sort((x,y)=>y-x);
     ids.forEach(ix=>hand.splice(ix,1));
     ownSelected=[];
@@ -777,7 +716,6 @@ function confirmDiscard(){
   }
 }
 
-/* human draw from target */
 function humanDrawFrom(ti){
   if(ti===turnIndex||disableClicks) return;
   if(!babaHands[ti]||babaHands[ti].length===0) return;
@@ -786,7 +724,7 @@ function humanDrawFrom(ti){
   const pickIdx = randInt(babaHands[ti].length);
   const drawn = babaHands[ti].splice(pickIdx, 1)[0];
   babaHands[turnIndex].push(drawn);
-  
+
   const infoCard = document.getElementById('infoCard');
   if(infoCard){
     infoCard.innerHTML=`
@@ -814,7 +752,6 @@ function humanDrawFrom(ti){
   }, 1000);
 }
 
-/* CPU turn (draw and discard) */
 function cpuPlayBaba(){
   const cpu = playerConfig[turnIndex];
   const waitTime = (cpu.strength==='strong')?700:(cpu.strength==='weak'?1500:1000);
@@ -862,7 +799,6 @@ function endBabaGame(loser){
 function nextTurn(){
   stopTurnTimer();
   const remainingPlayers = playerConfig.map((p,i)=>({hand:babaHands[i], length:babaHands[i]?.length || 0, index:i, name:p.name})).filter(p=>p.length > 0);
-
   if(remainingPlayers.length <= 1){
     if(remainingPlayers.length === 1 && remainingPlayers[0].hand.some(c=>c.type==='joker')){
       endBabaGame(remainingPlayers[0]);
@@ -873,7 +809,6 @@ function nextTurn(){
       return;
     }
   }
-
   let nextIndex = (turnIndex + 1) % players;
   let count = 0;
   while((!babaHands[nextIndex] || babaHands[nextIndex].length === 0) && count < players){
@@ -884,26 +819,18 @@ function nextTurn(){
       goHome(); 
       return;
   }
-
   turnIndex = nextIndex;
   renderBabaUI();
   startTurnTimer();
-
   if(playerConfig[turnIndex] && playerConfig[turnIndex].type==='cpu'){
     cpuPlayBaba();
   }
 }
-
-/* ---------------------------
-   modal controls
-----------------------------*/
 function showGraphLarge(card){
   if(!graphModal || !graphCanvas) return;
-  
-  if(graphModal) graphModal.style.display='flex';
+  graphModal.style.display='flex';
   const title = document.getElementById('graphTitle');
   if(title) title.textContent = `グラフ: ${formatEq(card.a, card.b)}`;
-  
   graphScale = 1;
   drawGraph(card);
 }
@@ -912,18 +839,14 @@ function drawGraph(card){
   const w=graphCanvas.width, h=graphCanvas.height;
   const xCenter=w/2, yCenter=h/2;
   const UNIT_PX = 40 * graphScale;
-  const GRID_STEP = 1;
-  const LABEL_STEP = 2;
   graphCtx.fillStyle='#fff';
   graphCtx.fillRect(0,0,w,h);
   graphCtx.save();
   graphCtx.translate(xCenter, yCenter);
-
   graphCtx.strokeStyle='#eee';
   graphCtx.lineWidth=1;
   const xMax = Math.ceil(w/2 / UNIT_PX);
   const yMax = Math.ceil(h/2 / UNIT_PX);
-
   for(let i=1; i<=xMax; i++){
     const px = i * UNIT_PX;
     graphCtx.beginPath();
@@ -934,18 +857,7 @@ function drawGraph(card){
     graphCtx.moveTo(-px, -h/2);
     graphCtx.lineTo(-px, h/2);
     graphCtx.stroke();
-    if(i % LABEL_STEP === 0){
-      graphCtx.fillStyle='#000';
-      graphCtx.font=`12px Arial`;
-      graphCtx.textAlign='center';
-      graphCtx.textBaseline='top';
-      if(i !== 0) graphCtx.fillText(i, px, 5);
-      if(-i !== 0) graphCtx.fillText(-i, -px, 5);
-    }
   }
-
-  graphCtx.textBaseline='middle';
-  graphCtx.textAlign='right';
   for(let i=1; i<=yMax; i++){
     const py = i * UNIT_PX;
     graphCtx.beginPath();
@@ -956,28 +868,15 @@ function drawGraph(card){
     graphCtx.moveTo(-w/2, -py);
     graphCtx.lineTo(w/2, -py);
     graphCtx.stroke();
-    if(i % LABEL_STEP === 0){
-      graphCtx.fillStyle='#000';
-      graphCtx.font=`12px Arial`;
-      if(i !== 0) graphCtx.fillText(-i, -5, py); 
-      if(-i !== 0) graphCtx.fillText(i, -5, -py); 
-    }
   }
-  // 軸
-  graphCtx.strokeStyle='#222';
-  graphCtx.lineWidth=2.5;
-  graphCtx.beginPath();
-  graphCtx.moveTo(-w/2,0); graphCtx.lineTo(w/2,0); graphCtx.stroke();
-  graphCtx.beginPath();
-  graphCtx.moveTo(0,-h/2); graphCtx.lineTo(0,h/2); graphCtx.stroke();
-
-  // グラフ
+  graphCtx.strokeStyle='#222'; graphCtx.lineWidth=2.5;
+  graphCtx.beginPath(); graphCtx.moveTo(-w/2,0); graphCtx.lineTo(w/2,0); graphCtx.stroke();
+  graphCtx.beginPath(); graphCtx.moveTo(0,-h/2); graphCtx.lineTo(0,h/2); graphCtx.stroke();
   if(card.a){
     graphCtx.strokeStyle='#1976d2';
     graphCtx.lineWidth=3;
     graphCtx.beginPath();
     let started = false;
-    let minX = -Math.floor(w/2/UNIT_PX), maxX = Math.floor(w/2/UNIT_PX);
     for(let px=-w/2;px<w/2;px+=2){
       const gx = px/UNIT_PX;
       const gy = card.a*gx+card.b;
@@ -991,7 +890,6 @@ function drawGraph(card){
     }
     graphCtx.stroke();
   }
-
   graphCtx.restore();
 }
 function closeGraph(){
@@ -1028,36 +926,30 @@ function showMatchTab(tab){
   }else if(tab==='graph'){
     matchContent.innerHTML = '<canvas id="matchGraphCanvas" width="400" height="260" style="width:100%; height:220px; background:#fff; margin-top:10px;"></canvas>';
     const ctx = document.getElementById('matchGraphCanvas').getContext('2d');
-    const w=400, h=260, cx=w/2, cy=h/2;
+    const w=400, h=260, cx=w/2, cy=h/2, UNIT=40;
     ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h);
     ctx.save();ctx.translate(cx,cy);
     ctx.strokeStyle='#eee';ctx.lineWidth=1;
     for(let i=-4;i<=4;i++){
-      ctx.beginPath();ctx.moveTo(i*40,-h/2);ctx.lineTo(i*40,h/2);ctx.stroke();
-      ctx.beginPath();ctx.moveTo(-w/2,i*40);ctx.lineTo(w/2,i*40);ctx.stroke();
-      if(i!==0){
-        ctx.fillStyle='#000';ctx.font='12px Arial';
-        ctx.textAlign='center';ctx.textBaseline='top';ctx.fillText(i,i*40,5);
-        ctx.textAlign='right';ctx.textBaseline='middle';ctx.fillText(-i,-5,-i*40);
-      }
+      ctx.beginPath();ctx.moveTo(i*UNIT,-h/2);ctx.lineTo(i*UNIT,h/2);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(-w/2,i*UNIT);ctx.lineTo(w/2,i*UNIT);ctx.stroke();
     }
     ctx.strokeStyle='#1976d2';ctx.lineWidth=3;ctx.beginPath();
     let started=false;
     for(let px= -w/2;px < w/2;px+=2){
-      const gx=px/40;const gy=c.a*gx+c.b;const py=-gy*40;
+      const gx=px/UNIT;const gy=c.a*gx+c.b;const py=-gy*UNIT;
       if(!started){ctx.moveTo(px,py);started=true;}
       else{ctx.lineTo(px,py);}
     }
     ctx.stroke();ctx.restore();
   }
 }
-/* -------- モーダル/リザルト/ターン他 -------- */
 function openResult(winList, pts, loser){
   if(!resultModal) return;
   resultModal.style.display='flex';
   if(resultScores){
     let txt = '';
-    if(winList && lose){ txt = '勝者: '+winList.join('・')+', 敗者: '+loser; }
+    if(winList && loser){ txt = '勝者: '+winList.join('・')+', 敗者: '+loser; }
     else{
       txt = scores.map((s,i)=>`${playerConfig[i].name}: ${s}点`).join('<br>');
     }
@@ -1073,12 +965,9 @@ function closeResult(){
 function goHome(){
   if(gameContainer) gameContainer.style.display='none';
   if(homeScreen) homeScreen.style.display='flex';
-  // 初期値リセットも可
   if(cardArea) cardArea.innerHTML='';
   if(learnedDiv) learnedDiv.innerHTML='';
 }
-
-/* ターン表示 */
 function updateTurnDisplay(){
   if(!turnBadge) return;
   if(playerConfig && playerConfig[turnIndex]){
@@ -1087,7 +976,6 @@ function updateTurnDisplay(){
     turnBadge.textContent = '';
   }
 }
-/* ターンタイマー（時間管理カスタムも可） */
 function startTurnTimer(){
   stopTurnTimer();
   turnTimer = setTimeout(()=>{},999999);
