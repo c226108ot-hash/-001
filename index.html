@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-<title>一次関数トランプ v41（捨て選択付き・修正版）</title>
+<title>一次関数トランプ v42（完全動作版）</title>
 <link rel="manifest" href="./manifest.json">
 <meta name="theme-color" content="#001428">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -97,7 +97,7 @@
 </style>
 </head>
 <body>
-<h1>一次関数トランプ v41（捨て選択付き）</h1>
+<h1>一次関数トランプ v42（完全動作版）</h1>
 
 <!-- 捨て選択UI（タイマー） -->
 <div id="discardChoiceUI" class="discard-ui" role="dialog" aria-modal="true">
@@ -133,7 +133,6 @@
   </div>
   <div class="small" style="margin-top:8px;opacity:0.9;">※ ペア数は手動入力できます（3〜10）。複数人プレイはプレイヤー設定で。</div>
 </div>
-
 <div id="gameContainer" style="display:none;padding:18px;">
   <div id="turnBanner">
     <span>🎯 現在のターン：</span>
@@ -226,7 +225,6 @@
 </div>
 
 <button id="installPwaBtn" class="install-pwa-btn">ホーム画面に追加</button>
-
 <script>
 /* ===== PWA & SW (安全に) ===== */
 let deferredPrompt;
@@ -273,7 +271,6 @@ let graphScale = 1;
 /* 新：捨てモード制御 */
 let discardMode = false;
 let selectablePairs = []; // for human: array of [i,j] index pairs in their hand
-let discardTimer = null;
 let discardInterval = null;
 
 const homeScreen = document.getElementById('homeScreen');
@@ -298,17 +295,12 @@ const discardYesBtn = document.getElementById('discardYesBtn');
 const discardSkipBtn = document.getElementById('discardSkipBtn');
 
 discardYesBtn.addEventListener('click', () => {
-  // start manual discard mode (human)
-  if(discardMode !== true) {
-    // only enable if there are selectablePairs
-    const current = turnIndex;
-    hideDiscardChoiceUI();
-    enableDiscardModeForPlayer(current);
-  }
+  const current = turnIndex;
+  hideDiscardChoiceUI();
+  enableDiscardModeForPlayer(current);
 });
 discardSkipBtn.addEventListener('click', () => {
   hideDiscardChoiceUI();
-  // skip and continue
   nextTurn();
 });
 
@@ -759,16 +751,13 @@ function renderBabaUI(){
 function onBabaHandCardClick(pi,hi){
   // If discard mode active and this player's discard selectablePairs contains hi -> perform discard
   if(discardMode && turnIndex === pi){
-    // find pair that contains hi
     const pair = selectablePairs.find(p => p[0] === hi || p[1] === hi);
     if(pair){
       discardPairFromHand(pi, pair);
       endDiscardMode();
-      // after discarding, proceed to next turn
       nextTurn();
       return;
     }
-    // otherwise ignore
     return;
   }
 
@@ -864,7 +853,6 @@ function handleAfterDrawForHuman(playerIndex){
   if(!hand || hand.length === 0){ nextTurn(); return; }
   const pairs = findAllPairsIndices(hand);
   if(pairs.length === 0){
-    // no pairs -> continue to next turn
     nextTurn();
     return;
   }
@@ -913,7 +901,7 @@ async function cpuPlayBaba(){
   nextTurn();
 }
 
-/* ペア検出（手札内）：先に見つかるペアを返す（既存の関数と互換） */
+/* ペア検出（手札内の最初のペアを返す） */
 function findFirstPairInHand(h){
   for(let i=0;i<h.length;i++){
     for(let j=i+1;j<h.length;j++){
@@ -923,7 +911,7 @@ function findFirstPairInHand(h){
   return null;
 }
 
-/* 新：手札内のすべてのペアのインデックスリストを返す（[[i,j],[k,l],...]） */
+/* 手札内のすべてのペアのインデックスリストを返す（[[i,j],[k,l],...]） */
 function findAllPairsIndices(h){
   const pairs = [];
   const used = new Set();
@@ -947,15 +935,14 @@ function showDiscardChoiceUIForPlayer(playerIndex, pairs){
   discardUI.style.display = 'flex';
   let timer = 5;
   discardTimerEl.textContent = timer;
-  // ensure user can click "捨てる" to enter manual selection
-  // interval countdown
+  if(discardInterval) { clearInterval(discardInterval); discardInterval = null; }
   discardInterval = setInterval(()=>{
     timer--;
     discardTimerEl.textContent = timer;
     if(timer <= 0){
       clearInterval(discardInterval);
+      discardInterval = null;
       hideDiscardChoiceUI();
-      // auto skip
       nextTurn();
     }
   },1000);
@@ -989,7 +976,6 @@ function enableDiscardModeForPlayer(playerIndex){
 /* end discard mode (clear highlights) */
 function endDiscardMode(){
   discardMode = false;
-  // remove highlights
   const els = document.querySelectorAll('.hand-card.pair-highlight');
   els.forEach(e=>e.classList.remove('pair-highlight'));
   selectablePairs = [];
@@ -997,8 +983,6 @@ function endDiscardMode(){
 
 /* discard pair from player's hand by index pair [i,j] */
 function discardPairFromHand(playerIndex, pair){
-  // pair: [i,j] - indices in the current hand array
-  // we must remove the higher index first
   const hand = babaHands[playerIndex];
   const ids = pair.slice().sort((a,b)=>b-a);
   const removedCards = [];
@@ -1019,9 +1003,7 @@ function showMatchModal(card){
   document.getElementById('matchTitle').textContent = 'ペア成立: ' + formatEq(card.a, card.b);
   showMatchTab('formula');
 }
-function closeMatchModal(){
-  if(matchModal) matchModal.style.display='none';
-}
+function closeMatchModal(){ if(matchModal) matchModal.style.display='none'; }
 function showMatchTab(tab){
   if(!matchContent || !matchModal.graphCard) return;
   let c = matchModal.graphCard;
@@ -1066,17 +1048,8 @@ function openResult(winList, pts, loser){
   ).join('');
 }
 function closeResult(){ if(resultModal) resultModal.style.display='none'; }
-function goHome(){
-  if(gameContainer) gameContainer.style.display='none';
-  if(homeScreen) homeScreen.style.display='flex';
-  if(cardArea) cardArea.innerHTML='';
-  if(learnedDiv) learnedDiv.innerHTML='';
-}
-function updateTurnDisplay(){
-  if(!turnBadge) return;
-  if(playerConfig && playerConfig[turnIndex]) turnBadge.textContent = playerConfig[turnIndex].name;
-  else turnBadge.textContent = '';
-}
+function goHome(){ if(gameContainer) gameContainer.style.display='none'; if(homeScreen) homeScreen.style.display='flex'; if(cardArea) cardArea.innerHTML=''; if(learnedDiv) learnedDiv.innerHTML=''; }
+function updateTurnDisplay(){ if(!turnBadge) return; if(playerConfig && playerConfig[turnIndex]) turnBadge.textContent = playerConfig[turnIndex].name; else turnBadge.textContent = ''; }
 function startTurnTimer(){ stopTurnTimer(); turnTimer = setTimeout(()=>{},999999); }
 function stopTurnTimer(){ if(turnTimer) clearTimeout(turnTimer); turnTimer = null; }
 
@@ -1151,7 +1124,59 @@ function drawGraph(card){
 function closeGraph(){ if(graphModal) graphModal.style.display='none'; }
 function zoomGraph(s){ graphScale *= s; if(matchModal.style.display==='flex'){ if(matchModal.graphCard) drawGraph(matchModal.graphCard); }else if(graphModal.style.display==='flex'){ if(graphModal.graphCard) drawGraph(graphModal.graphCard); } }
 
-/* ===== 簡易初期状態をセット（サンプルプレイヤー） ===== */
+/* ===== 必要な補助関数: endMemoryGame と nextTurn ===== */
+function endMemoryGame(){
+  // シンプルに終了 → リザルト表示
+  stopTurnTimer();
+  // 決着を判定（点数最大者）
+  const maxScore = Math.max(...scores);
+  const winners = [];
+  scores.forEach((sc,i)=>{ if(sc===maxScore) winners.push(playerConfig[i].name); });
+  openResult(winners, 0, null);
+}
+
+function nextTurn(){
+  // Advance turn, handle empty hands etc.
+  // For safety, clear discard mode if active
+  endDiscardMode();
+
+  // Find next player who still participates (for Babanuki, skip empty hands)
+  let attempts = 0;
+  let nextIndex = (turnIndex + 1) % players;
+  while(attempts < players){
+    if(mode === 'babanuki'){
+      if(babaHands[nextIndex] && babaHands[nextIndex].length > 0) break;
+    } else {
+      // memory mode: all players are always valid
+      break;
+    }
+    nextIndex = (nextIndex + 1) % players;
+    attempts++;
+  }
+  turnIndex = nextIndex % players;
+
+  updateTurnDisplay();
+  // Re-render UI for baba
+  if(mode === 'babanuki') renderBabaUI();
+  if(mode === 'memory') {
+    // memory uses card grid; ensure it's visible
+    // renderMemoryTable(); // avoid resetting state; not necessary here
+  }
+
+  stopTurnTimer();
+  startTurnTimer();
+
+  // If CPU's turn, schedule their move
+  if(playerConfig[turnIndex] && playerConfig[turnIndex].type === "cpu"){
+    if(mode === "babanuki"){
+      setTimeout(cpuPlayBaba, 600);
+    } else if(mode === "memory"){
+      setTimeout(cpuPlayMemory, 600);
+    }
+  }
+}
+
+/* ===== 簡易初期状態（サンプルプレイヤー） ===== */
 playerConfig = [
   {name:'P1', type:'human', strength:'weak'},
   {name:'P2', type:'cpu', strength:'normal'}
