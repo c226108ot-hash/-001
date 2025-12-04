@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -31,8 +30,7 @@
   .table-card table{border-collapse:collapse; width:100%; table-layout: fixed;}
   .table-card td,.table-card th{padding:4px; border:1px solid rgba(255,255,255,0.06); font-size:13px; text-align:center;}
   .baba-container{display:flex;flex-direction:column;align-items:center;gap:14px}
-  /* ----- changed: expanded circle-wrap to avoid overlap ----- */
-  .circle-wrap{position:relative;width:700px;height:520px;margin:0 auto;}
+  .circle-wrap{position:relative;width:560px;height:420px;}
   .player-slot{position:absolute; width:120px; text-align:center; transform-origin:center center;}
   .player-slot .slot-panel{background:rgba(2,40,50,0.85); padding:8px;border-radius:10px;}
   .player-slot.current .slot-panel{box-shadow:0 0 18px var(--accent); border:2px solid rgba(255,217,102,0.2);}
@@ -120,10 +118,14 @@
     </div>
     <div style="margin-top:16px;">
       <div style="font-size:18px;font-weight:700;">CPU の強さ</div>
-      <button id="cpuWeakest" onclick="setCPU('weakest')">最弱</button>
-      <button id="cpuWeak" onclick="setCPU('weak')">弱</button>
-      <button id="cpuNormal" onclick="setCPU('normal')" style="margin-left:6px;">普通</button>
-      <button id="cpuStrong" onclick="setCPU('strong')" style="margin-left:6px;">強</button>
+      <!-- 元の3段ボタンを5段に拡張。ツールチップを付与。見た目はほぼ同じ位置で収まるようにしました -->
+      <div style="margin-top:8px;">
+        <button data-level="1" onclick="setCPULevel(1)" title="ほぼ記憶しない／とても遅い">1<br><span style="font-size:10px">最弱</span></button>
+        <button data-level="2" onclick="setCPULevel(2)" title="少しだけ記憶／遅い" style="margin-left:6px;">2<br><span style="font-size:10px">弱</span></button>
+        <button data-level="3" onclick="setCPULevel(3)" title="バランス型" style="margin-left:6px;">3<br><span style="font-size:10px">普通</span></button>
+        <button data-level="4" onclick="setCPULevel(4)" title="高速／深い記憶" style="margin-left:6px;">4<br><span style="font-size:10px">強</span></button>
+        <button data-level="5" onclick="setCPULevel(5)" title="完全記憶／とても高速" style="margin-left:6px;">5<br><span style="font-size:10px">最強</span></button>
+      </div>
     </div>
     <div style="margin-top:22px;">
       <button onclick="startGameFromHome()">▶ ゲーム開始</button>
@@ -206,18 +208,6 @@
     </div>
   </div>
 </div>
-
-<!-- ----- New: large draw-card modal (for human draws) ----- -->
-<div id="drawCardModal" class="modal-back" style="display:none;">
-  <div class="modal" style="width:420px;">
-    <div style="display:flex;justify-content:space-between;align-items:center;">
-      <div style="font-weight:800;">引いたカード</div>
-      <div><button onclick="closeDrawCardModal()">閉じる</button></div>
-    </div>
-    <div id="drawCardContent" style="margin-top:10px;font-size:28px;font-weight:700;text-align:center;"></div>
-  </div>
-</div>
-
 <div id="infoCard" style="display:none;position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:90;"></div>
 
 <div id="cpuCardModal" class="modal-back" style="display:none;">
@@ -254,6 +244,7 @@ if('serviceWorker' in navigator){
   .then(()=>console.log('SW registered'))
   .catch(()=>console.log('SW registration failed'));
 }
+
 // ====== ゲーム本体のコード開始 =======
 let mode = null;
 let players = 2;
@@ -265,96 +256,49 @@ let turnIndex = 0;
 let remainingPairs = 0;
 let cpuMemory = {};
 let selectedPairs = 4;
-let selectedCPUStrength = 'normal';
+// 追加: CPU レベル（1..5）。既存の文字列設定とも互換を持たせるため変換関数あり。
+let selectedCPULevel = 3; // デフォルト: 普通(3)
 let chosenMode = 'memory';
 let disableClicks = false;
 let cpuWaitFlag = false;  // CPU waiting for modal to close
 
-function waitCpuStop(){
-  return new Promise(resolve=>{
-    const timer = setInterval(()=>{
-      if(!cpuWaitFlag){
-        clearInterval(timer);
-        resolve();
-      }
-    },100);
-  });
+// 公開時間を 5秒に統一（要件）
+const CARD_OPEN_TIME = 5000;
+
+// CPU パラメータ（5段階）
+// label/ delay(ms) / memory(0..1)
+const cpuStrengthMap = {
+  1: { label: "最弱",  delay: 2600, memory: 0.0 },
+  2: { label: "弱",    delay: 1800, memory: 0.25 },
+  3: { label: "普通",  delay: 1100, memory: 0.55 },
+  4: { label: "強",    delay: 650,  memory: 0.85 },
+  5: { label: "最強",  delay: 300,  memory: 1.0 }
+};
+
+// 互換: 古い文字列設定 ('weak','normal','strong') をレベルに変換
+function strengthStringToLevel(s){
+  if(!s) return selectedCPULevel;
+  s = String(s).toLowerCase();
+  if(s === 'weak' || s === 'weakest') return 2;
+  if(s === 'normal') return 3;
+  if(s === 'strong') return 4;
+  return selectedCPULevel;
 }
 
-function showCpuCard(card){
-  cpuWaitFlag = true;
-
-  // ▼ グラフカードのときは人間と同じ「大きいグラフ表示モーダル」を使う
-  if(card.type === 'graph'){
-    showGraphLarge(card);   // グラフ描画; cpuWaitFlag は true のままにする（closeGraph で false に）
-    return;
+// 汎用取得: 引数に数値(1..5)か文字列を受け取り、パラメータを返す
+function getCpuParams(strOrLevel){
+  if(typeof strOrLevel === 'number'){
+    return cpuStrengthMap[strOrLevel] || cpuStrengthMap[3];
   }
-
-  // ▼ それ以外（式・対応表・detail・joker）は従来のCPUモーダルを表示
-  const modal = document.getElementById('cpuCardModal');
-  const cont = document.getElementById('cpuCardContent');
-  if(cont){
-    if(card.type === 'table'){
-      cont.innerHTML = makeTableHTML(card.a, card.b);
-    } else if(card.type === 'detail'){
-      cont.innerHTML = `a=${card.a}<br>b=${card.b}`;
-    } else {
-      cont.innerHTML = card.text || formatEq(card.a, card.b);
-    }
-  }
-  if(modal) modal.style.display='flex';
+  // 文字列なら変換して返す
+  const lvl = strengthStringToLevel(strOrLevel);
+  return cpuStrengthMap[lvl];
 }
-function closeCpuCardModal(){
-  const modal = document.getElementById('cpuCardModal');
-  if(modal) modal.style.display='none';
-  cpuWaitFlag = false;
+function getCpuLabel(strOrLevel){
+  return getCpuParams(strOrLevel).label;
 }
 
-let drawWait = false;
-function showDrawCard(card, fromName){
-  const modal = document.getElementById('drawCardModal');
-  const cont = document.getElementById('drawCardContent');
-  cont.innerHTML = `
-    <div style="font-size:16px;color:#555;">${fromName} から引いたカード</div>
-    <div style="margin-top:16px;">${card.text || formatEq(card.a, card.b)}</div>
-  `;
-  modal.style.display='flex';
-  drawWait = true;
-}
-
-function closeDrawCardModal(){
-  const modal = document.getElementById('drawCardModal');
-  modal.style.display='none';
-  drawWait = false;
-}
-
-function waitDrawClose(){
-  return new Promise(resolve=>{
-    const t = setInterval(()=>{
-      if(!drawWait){
-        clearInterval(t);
-        resolve();
-      }
-    },100);
-  });
-}
-
-function getCpuParams(strength){
-  if(strength === 'weakest'){
-    return {delay:1800, memory:0};
-  }
-  if(strength === 'weak'){
-    return {delay:1100, memory:0.2};
-  }
-  if(strength === 'normal'){
-    return {delay:700, memory:0.6};
-  }
-  if(strength === 'strong'){
-    return {delay:450, memory:1.0};
-  }
-  return {delay:900, memory:0.3};
-}
-
+// DOM refs
 let turnTimer = null;
 let babaHands = [];
 let ownSelected = [];
@@ -380,6 +324,7 @@ const usedFunctionsList = document.getElementById('usedFunctionsList');
 function randInt(n){ return Math.floor(Math.random()*n); }
 function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=randInt(i+1); [a[i],a[j]]=[a[j],a[i]]; } return a; }
 function formatEq(a,b){
+  if(a===null) return 'JOKER';
   let aText=(a===1)?"x":(a===-1?"-x":`${a}x`);
   if(b===0) return `y=${aText}`;
   return `y=${aText}${b>0?"+":""}${b}`;
@@ -409,15 +354,30 @@ function selectMode(m){
   if(mEmb) mEmb.style.opacity=(m==='memory'?1:0.6);
   if(mAbb) mAbb.style.opacity=(m==='babanuki'?1:0.6);
 }
-function setCPU(level){
-  selectedCPUStrength=level;
-  const cW = document.getElementById('cpuWeak');
-  const cN = document.getElementById('cpuNormal');
-  const cS = document.getElementById('cpuStrong');
-  if(cW) cW.style.opacity=(level==='weak'?1:0.6);
-  if(cN) cN.style.opacity=(level==='normal'?1:0.6);
-  if(cS) cS.style.opacity=(level==='strong'?1:0.6);
+
+// 新: ホームの5段ボタンを操作する関数（ツールチップ付き）
+function setCPULevel(level){
+  if(typeof level !== 'number') level = Number(level) || 3;
+  selectedCPULevel = Math.max(1, Math.min(5, level));
+  // ボタンの見た目更新（存在すれば）
+  const btns = document.querySelectorAll('[data-level]');
+  btns.forEach(b=>{
+    b.style.boxShadow = (Number(b.dataset.level) === selectedCPULevel) ? '0 0 10px #ffd966' : 'none';
+    b.style.opacity = (Number(b.dataset.level) === selectedCPULevel) ? '1' : '0.6';
+  });
 }
+
+// 互換用: 旧API setCPU(levelString) を使っている場合に対応
+function setCPU(levelStr){
+  // 旧ボタンが文字列を渡す場合に呼ばれる想定を残す（互換）
+  if(typeof levelStr === 'string'){
+    const map = { 'weak':2, 'normal':3, 'strong':4, 'weakest':1, 'strongest':5 };
+    setCPULevel(map[levelStr] || 3);
+  } else {
+    setCPULevel(levelStr);
+  }
+}
+
 function startGameFromHome(){
   const pairInput = document.getElementById('pairInput');
   const val=Number(pairInput?pairInput.value:4);
@@ -426,11 +386,19 @@ function startGameFromHome(){
   mode=chosenMode;
 
   if(!playerConfig || playerConfig.length===0){
+    // 既存の挙動に合わせ、P2 を CPU として追加（strength は numeric レベルで入れる）
     playerConfig=[
-      {name:'P1', type:'human', strength:'weak'},
-      {name:'P2', type:'cpu', strength:selectedCPUStrength}
+      {name:'P1', type:'human', strength:3},
+      {name:'P2', type:'cpu', strength:selectedCPULevel}
     ];
+  } else {
+    // もし既にある場合、ensure strength values are numeric levels for CPUs
+    playerConfig = playerConfig.map(p=>{
+      if(p.type === 'cpu') return {...p, strength: strengthStringToLevel(p.strength)};
+      return p;
+    });
   }
+
   players = playerConfig.length;
   usedFunctionsSet.clear();
 
@@ -443,21 +411,22 @@ function startGameFromHome(){
   updateTurnDisplay();
 }
 
-function openSetup(){ 
-  if(setupModal) setupModal.style.display='flex'; 
+function openSetup(){
+  if(setupModal) setupModal.style.display='flex';
   const setupCount = document.getElementById('setupCount');
-  if(setupCount) setupCount.value = players; 
-  renderSetupPlayers(players); 
+  if(setupCount) setupCount.value = players;
+  renderSetupPlayers(players);
 }
-function closeSetup(){ 
-  if(setupModal) setupModal.style.display='none'; 
+function closeSetup(){
+  if(setupModal) setupModal.style.display='none';
 }
 function renderSetupPlayers(n){
   if(setupPlayersList) setupPlayersList.innerHTML='';
   for(let i=0;i<n;i++){
-    const cfg = playerConfig[i] || {name:`P${i+1}`, type:'human', strength:'weak'};
+    const cfg = playerConfig[i] || {name:`P${i+1}`, type:'human', strength:3};
     const row = document.createElement('div');
     row.style.margin='6px';
+    // strength select kept compatible with original values, but will be converted to numeric on applySetup
     row.innerHTML = `
       P${i+1} 名称： <input id="name_p${i}" value="${cfg.name}" style="width:120px;">
       タイプ： <select id="type_p${i}">
@@ -465,18 +434,19 @@ function renderSetupPlayers(n){
         <option value="cpu">CPU</option>
       </select>
       <select id="strength_p${i}">
-        <option value="weakest">最弱</option>
-        <option value="weak">弱</option>
-        <option value="normal">普通</option>
-        <option value="strong">強</option>
+        <option value="2">弱</option>
+        <option value="3">普通</option>
+        <option value="4">強</option>
       </select>
     `;
     if(setupPlayersList) setupPlayersList.appendChild(row);
-    setTimeout(()=>{ 
+    setTimeout(()=>{
       const typeEl = document.getElementById(`type_p${i}`);
       const strengthEl = document.getElementById(`strength_p${i}`);
-      if(typeEl) typeEl.value=cfg.type; 
-      if(strengthEl) strengthEl.value=cfg.strength; 
+      if(typeEl) typeEl.value=cfg.type;
+      // cfg.strength could be numeric or string; normalize
+      const lvl = (typeof cfg.strength === 'number') ? cfg.strength : strengthStringToLevel(cfg.strength);
+      if(strengthEl) strengthEl.value = Math.max(2, Math.min(4, lvl));
     },10);
   }
 }
@@ -488,8 +458,11 @@ function applySetup(){
   for(let i=0;i<n;i++){
     const name=document.getElementById(`name_p${i}`)?.value||`P${i+1}`;
     const type=document.getElementById(`type_p${i}`)?.value;
-    const strength=document.getElementById(`strength_p${i}`)?.value;
-    playerConfig.push({name,type,strength});
+    const strengthVal=document.getElementById(`strength_p${i}`)?.value;
+    // strengthVal is numeric string (2..4), convert to number
+    let strengthLevel = 3;
+    if(strengthVal) strengthLevel = Number(strengthVal);
+    playerConfig.push({name,type,strength: strengthLevel});
   }
   closeSetup();
   updateTurnDisplay();
@@ -535,9 +508,10 @@ function renderMemoryTable(){
       if(disableClicks) return;
       if(wrap.classList.contains('matched') || wrap.classList.contains('flipped')) return;
 
-      if(c.type==='graph'){ 
+      if(c.type==='graph'){
         wrap.classList.add('flipped');
         showGraphLarge(c);
+        // 統一: 5秒表示（CARD_OPEN_TIME）
         setTimeout(() => {
             wrap.classList.remove('flipped');
             if(firstFlip !== null){
@@ -550,7 +524,7 @@ function renderMemoryTable(){
                 if(playerConfig[turnIndex] && playerConfig[turnIndex].type==='cpu') setTimeout(cpuPlayMemory,400);
             }
             disableClicks = false;
-        }, 1200);
+        }, CARD_OPEN_TIME);
         disableClicks = true;
       } else {
         onCardClickedMemory(idx);
@@ -608,6 +582,7 @@ function revealCardMemory(idx, fromCpu=false){
       if(playerConfig[turnIndex] && playerConfig[turnIndex].type==='cpu') setTimeout(cpuPlayMemory,350);
     },400);
   } else {
+    // 統一: 5秒表示
     setTimeout(()=>{
       const c1=document.querySelector(`.card[data-index='${firstFlip}']`);
       const c2=document.querySelector(`.card[data-index='${idx}']`);
@@ -619,7 +594,7 @@ function revealCardMemory(idx, fromCpu=false){
       updateTurnDisplay();
       startTurnTimer();
       if(playerConfig[turnIndex] && playerConfig[turnIndex].type==='cpu') setTimeout(cpuPlayMemory,400);
-    },1200);
+    }, CARD_OPEN_TIME);
   }
 }
 
@@ -631,10 +606,11 @@ function addLearned(card){
 }
 
 async function cpuPlayMemory(){
-  // If human is viewing a drawn card modal, wait so CPU doesn't act while modal is open
-  if(typeof drawWait !== 'undefined' && drawWait) await waitDrawClose();
   const cpu = playerConfig[turnIndex];
-  const param = getCpuParams(cpu.strength || selectedCPUStrength);
+  const param = getCpuParams(cpu.strength || selectedCPULevel);
+
+  // CPU がモーダル表示中なら閉じるまで待つ（要件）
+  if(cpuWaitFlag) await waitCpuStop();
 
   await new Promise(r=>setTimeout(r,param.delay));
   if(disableClicks) return;
@@ -675,9 +651,11 @@ async function cpuPlayMemory(){
 
   await cpuFlipMemory(pick2);
 }
+
 async function cpuFlipMemory(idx){
   revealCardMemory(idx,true);
   const c = deckCards[idx];
+  // CPU がめくったカードはモーダルで表示。閉じるまでCPUは停止する（cpuWaitFlag）
   showCpuCard(c);
   await waitCpuStop();
 }
@@ -728,8 +706,7 @@ function renderBabaUI(){
   const circle = document.createElement('div');
   circle.className='circle-wrap';
 
-  // ----- changed: increase center and radii to move players outward -----
-  const cx = 350, cy = 260, radiusX = 300, radiusY = 200;
+  const cx = 280, cy = 210, radiusX = 220, radiusY = 140;
 
   for(let i=0;i<players;i++){
     const angle = (Math.PI*2)/players * i - Math.PI/2;
@@ -826,7 +803,7 @@ function confirmDiscard(){
   }
 }
 
-async function humanDrawFrom(ti){
+function humanDrawFrom(ti){
   if(ti===turnIndex||disableClicks) return;
   if(!babaHands[ti]||babaHands[ti].length===0) return;
 
@@ -835,32 +812,42 @@ async function humanDrawFrom(ti){
   const drawn = babaHands[ti].splice(pickIdx, 1)[0];
   babaHands[turnIndex].push(drawn);
 
-  renderBabaUI();
+  const infoCard = document.getElementById('infoCard');
+  if(infoCard){
+    infoCard.innerHTML=`
+      <div class="card-inner" style="transform: rotateY(180deg);">
+        <div class="face back" style="background:#0c2a3d; padding:16px;">
+          <div style="font-weight:700;">${playerConfig[ti].name} から引いたカード</div>
+          <div style="margin-top:8px; font-size:18px;">${drawn.text || formatEq(drawn.a,drawn.b)}</div>
+        </div>
+      </div>
+    `;
+    infoCard.style.display='block';
+  }
 
-  // show large modal and wait until user closes it
-  showDrawCard(drawn, playerConfig[ti].name);
-  await waitDrawClose();
-
-  // After drawing, allow the human player to manually discard if they have a pair.
-  const pair = findFirstPairInHand(babaHands[turnIndex]);
-  if(pair){
-    // enable interactions so player can select two cards and press "選択した2枚を捨てる"
-    disableClicks = false;
-    renderBabaUI();
-    // nextTurn() will be called after the player confirms discard via confirmDiscard().
-    return;
-  } else {
-    // no pair -> end turn
+  // 統一: 5秒表示（CARD_OPEN_TIME）
+  setTimeout(()=>{
+    if(infoCard) infoCard.style.display='none';
+    const pair = findFirstPairInHand(babaHands[turnIndex]);
+    if(pair){
+      const ids=[pair.i,pair.j].sort((a,b)=>b-a);
+      const c1 = babaHands[turnIndex][ids[0]];
+      ids.forEach(ix=>babaHands[turnIndex].splice(ix,1));
+      showMatchModal(c1);
+    }
     disableClicks = false;
     nextTurn();
-  }
+  }, CARD_OPEN_TIME);
 }
 
+
 async function cpuPlayBaba(){
-  // If human is viewing a drawn card modal, wait so CPU doesn't act while modal is open
-  if(typeof drawWait !== 'undefined' && drawWait) await waitDrawClose();
   const cpu = playerConfig[turnIndex];
-  const param = getCpuParams(cpu.strength || selectedCPUStrength);
+  const param = getCpuParams(cpu.strength || selectedCPULevel);
+
+  // CPU がモーダル表示中なら閉じるまで待つ（要件）
+  if(cpuWaitFlag) await waitCpuStop();
+
   await new Promise(r=>setTimeout(r,param.delay));
   const playersCount = players;
   let targetIdx = (turnIndex+1)%playersCount;
@@ -889,6 +876,32 @@ async function cpuPlayBaba(){
     showMatchModal(c1);
   }
   nextTurn();
+}
+
+// small utility: wait for cpuWaitFlag to clear
+function waitCpuStop(){
+  return new Promise(resolve=>{
+    const timer = setInterval(()=>{
+      if(!cpuWaitFlag){
+        clearInterval(timer);
+        resolve();
+      }
+    },100);
+  });
+}
+
+function showCpuCard(card){
+  cpuWaitFlag = true;
+  const modal = document.getElementById('cpuCardModal');
+  const cont = document.getElementById('cpuCardContent');
+  if(cont) cont.innerHTML = card.text || formatEq(card.a, card.b);
+  if(modal) modal.style.display='flex';
+}
+function closeCpuCardModal(){
+  const modal = document.getElementById('cpuCardModal');
+  if(modal) modal.style.display='none';
+  // 閉じたら CPU 再開
+  cpuWaitFlag = false;
 }
 
 function findFirstPairInHand(h){
@@ -925,7 +938,7 @@ function nextTurn(){
     count++;
   }
   if (count >= players) {
-      goHome(); 
+      goHome();
       return;
   }
   turnIndex = nextIndex;
@@ -938,7 +951,6 @@ function nextTurn(){
 function showGraphLarge(card){
   if(!graphModal || !graphCanvas) return;
   graphModal.style.display='flex';
-  graphModal.graphCard = card;
   const title = document.getElementById('graphTitle');
   if(title) title.textContent = `グラフ: ${formatEq(card.a, card.b)}`;
   graphScale = 1;
@@ -1004,11 +1016,6 @@ function drawGraph(card){
 }
 function closeGraph(){
   if(graphModal) graphModal.style.display='none';
-
-  // ▼ CPU がこのモーダルを開いていた場合 → 再開
-  if(cpuWaitFlag){
-    cpuWaitFlag = false;
-  }
 }
 function zoomGraph(s){
   graphScale *= s;
@@ -1086,7 +1093,14 @@ function goHome(){
 function updateTurnDisplay(){
   if(!turnBadge) return;
   if(playerConfig && playerConfig[turnIndex]){
-    turnBadge.textContent = playerConfig[turnIndex].name;
+    const p = playerConfig[turnIndex];
+    if(p.type === 'cpu'){
+      // CPU の強さラベルを追加（既存の表示を壊さない）
+      const label = getCpuLabel(p.strength);
+      turnBadge.textContent = `${p.name}（${label}）`;
+    } else {
+      turnBadge.textContent = p.name;
+    }
   }else{
     turnBadge.textContent = '';
   }
@@ -1099,6 +1113,12 @@ function stopTurnTimer(){
   if(turnTimer) clearTimeout(turnTimer);
   turnTimer = null;
 }
+
+// 初期プレイヤー（互換性確保）
+playerConfig = [ {name:'P1', type:'human', strength:3}, {name:'P2', type:'cpu', strength: selectedCPULevel} ];
+// setCPULevelで見た目初期化
+setCPULevel(selectedCPULevel);
+
 </script>
 </body>
 </html>
