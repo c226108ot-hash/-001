@@ -3,8 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-<title>一次関数トランプ v40（改良版）</title>
-<!-- PWA対応 -->
+<title>一次関数トランプ v41（改良版） - 修正版（手札ミニ表示統合版）</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#001428">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -18,7 +17,7 @@
   button{padding:8px 10px;border-radius:6px;border:none;cursor:pointer;background:#fff;color:#000;}
   input[type=number]{padding:6px;border-radius:6px;border:none;width:80px;}
   #gameArea{display:flex;gap:32px;padding:24px;}
-  #cardArea{flex:1; min-height:420px;}
+  #cardArea{flex:1; min-height:420px; position:relative;}
   .card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:12px;margin-top:18px;}
   .card{perspective:800px; cursor:pointer; position:relative;}
   .card-inner{transition: transform .45s; transform-style: preserve-3d; position:relative; width:100%; min-height:90px; border-radius:10px;}
@@ -100,10 +99,35 @@
     box-shadow:0 2px 8px #3335;
     cursor:pointer;display:none;
   }
+
+  /* === 変更点: 下部に大きな手札領域を追加 === */
+  .big-hand-area{
+    position:relative;
+    width:100%;
+    margin-top:12px;
+    background:transparent;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:8px;
+    z-index:10;
+  }
+  .big-hand-row{ display:flex; gap:12px; justify-content:center; flex-wrap:wrap; padding:10px; background:rgba(2,40,50,0.55); border-radius:10px; min-height:84px; }
+  .big-hand-card{ background:#084550; color:#fff; border-radius:10px; padding:12px 16px; min-width:120px; min-height:70px; display:flex; align-items:center; justify-content:center; cursor:pointer; font-weight:700; font-size:18px; }
+  .big-hand-card.selected{ outline:4px solid #ffd966; }
+  .big-hand-controls{ display:flex; gap:8px; margin-top:8px; }
+  /* ミニカードの内部要素調整 */
+  .mini-table { font-size:11px; color:#000; background:#fff; padding:3px; border-radius:6px; }
+  .mini-table table{ border-collapse:collapse; width:100%; }
+  .mini-table td,.mini-table th{ padding:2px; border:1px solid rgba(0,0,0,0.06); text-align:center; font-size:11px; }
+  /* スマホ横幅小さい時にカードを縮める */
+  @media screen and (max-width:520px){
+    .big-hand-card{ min-width:72px; min-height:48px; font-size:13px; padding:8px; }
+  }
 </style>
 </head>
 <body>
-<h1>一次関数トランプ v40（改良版）</h1>
+<h1>一次関数トランプ v41（改良版）</h1>
 <div id="homeScreen" style="display:flex;flex-direction:column;align-items:center;margin-top:10px;">
   <div class="container-box">
     <div style="font-size:20px;font-weight:700;margin-bottom:6px;">モード・ペア数・CPU強さを選んで ▶ ゲーム開始</div>
@@ -118,7 +142,6 @@
     </div>
     <div style="margin-top:16px;">
       <div style="font-size:18px;font-weight:700;">CPU の強さ</div>
-      <!-- 元の3段ボタンを5段に拡張。ツールチップを付与。見た目はほぼ同じ位置で収まるようにしました -->
       <div style="margin-top:8px;">
         <button data-level="1" onclick="setCPULevel(1)" title="ほぼ記憶しない／とても遅い">1<br><span style="font-size:10px">最弱</span></button>
         <button data-level="2" onclick="setCPULevel(2)" title="少しだけ記憶／遅い" style="margin-left:6px;">2<br><span style="font-size:10px">弱</span></button>
@@ -220,9 +243,7 @@
   </div>
 </div>
 
-<!-- PWAインストールボタン -->
 <button id="installPwaBtn" class="install-pwa-btn">ホーム画面に追加</button>
-<!-- =============== ここからJS本体オールインワン =============== -->
 <script>
 let deferredPrompt;
 const installBtn = document.getElementById('installPwaBtn');
@@ -261,6 +282,11 @@ let selectedCPULevel = 3; // デフォルト: 普通(3)
 let chosenMode = 'memory';
 let disableClicks = false;
 let cpuWaitFlag = false;  // CPU waiting for modal to close
+
+// 【追加】ババ抜き用: ターン中にカードを引いたかどうかのフラグ
+let hasDrawnThisTurn = false;
+// 【追加】ドロー後のアクションを保持するグローバル変数
+let postDrawAction = null; 
 
 // 公開時間を 5秒に統一（要件）
 const CARD_OPEN_TIME = 5000;
@@ -345,6 +371,75 @@ function makeTableHTML(a,b){
     </div>
   `;
 }
+
+// --- 新規: ミニグラフ / ミニ表作成関数 ---
+function makeMiniGraph(card){
+  const cvs = document.createElement('canvas');
+  cvs.width = 120;
+  cvs.height = 80;
+  cvs.style.width = '120px';
+  cvs.style.height = '80px';
+  cvs.style.borderRadius = '6px';
+  cvs.style.background = '#fff';
+  const ctx = cvs.getContext('2d');
+  // 軸描画
+  ctx.fillStyle = '#fff'; ctx.fillRect(0,0,cvs.width,cvs.height);
+  ctx.save();
+  ctx.translate(cvs.width/2, cvs.height/2);
+  ctx.strokeStyle = '#ddd'; ctx.lineWidth = 1;
+  // 軸
+  ctx.beginPath(); ctx.moveTo(-cvs.width/2,0); ctx.lineTo(cvs.width/2,0); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0,-cvs.height/2); ctx.lineTo(0,cvs.height/2); ctx.stroke();
+  // グリッド薄め
+  ctx.strokeStyle = '#f3f3f3';
+  for(let i=-2;i<=2;i++){
+    ctx.beginPath(); ctx.moveTo(i*(cvs.width/8), -cvs.height/2); ctx.lineTo(i*(cvs.width/8), cvs.height/2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-cvs.width/2, i*(cvs.height/8)); ctx.lineTo(cvs.width/2, i*(cvs.height/8)); ctx.stroke();
+  }
+  // 関数描画
+  if(card && card.a !== null && card.a !== undefined){
+    const UNIT = 20; // 20px per x unit
+    ctx.strokeStyle = '#1976d2'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    let started=false;
+    for(let px=-cvs.width/2; px<=cvs.width/2; px+=2){
+      const gx = px/UNIT;
+      const gy = card.a * gx + card.b;
+      const py = -gy * UNIT;
+      if(!started){ ctx.moveTo(px,py); started=true; } else ctx.lineTo(px,py);
+    }
+    ctx.stroke();
+  } else {
+    // Joker: 薄い文字
+    ctx.fillStyle='#000';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('JOKER', 0, 4);
+  }
+  ctx.restore();
+  return cvs;
+}
+
+function makeMiniTable(card){
+  const wrapper = document.createElement('div');
+  wrapper.className = 'mini-table';
+  wrapper.style.width = '120px';
+  wrapper.style.borderRadius = '6px';
+  wrapper.style.boxSizing = 'border-box';
+  wrapper.style.padding = '4px';
+  const xVals = [-1,0,1];
+  const yVals = xVals.map(x => (card && (card.a!==null && card.a!==undefined)) ? (card.a * x + card.b) : '');
+  // format numbers compactly
+  const fmt = (v) => (v === '' ? '' : (Number.isInteger(v) ? String(v) : (Math.round(v*10)/10).toFixed(1)));
+  let html = '<table><tr><th>x</th>';
+  xVals.forEach(x => html += `<td>${x}</td>`);
+  html += '</tr><tr><th>y</th>';
+  yVals.forEach(y => html += `<td>${fmt(y)}</td>`);
+  html += '</tr></table>';
+  wrapper.innerHTML = html;
+  return wrapper;
+}
+// --- /新規 ---
 
 // ----- ホーム画面・セットアップ関連 -----
 function selectMode(m){
@@ -538,7 +633,7 @@ function onCardClickedMemory(idx){
   if(disableClicks) return;
   const card = document.querySelector(`.card[data-index='${idx}']`);
   if(!card) return;
-  if(card.classList.contains('matched')||card.classList.contains('flipped')) return;
+  if(card.classList.contains('matched') || card.classList.contains('flipped')) return;
   revealCardMemory(idx);
 }
 
@@ -696,7 +791,10 @@ function startBabanuki(pairCount){
   });
   renderBabaUI();
   startTurnTimer();
-  nextTurn();
+  // 初回は nextTurn() を呼ばずに、最初のプレイヤーからスタートさせる
+  if(playerConfig[turnIndex] && playerConfig[turnIndex].type==='cpu'){
+    cpuPlayBaba();
+  }
 }
 
 function renderBabaUI(){
@@ -724,35 +822,148 @@ function renderBabaUI(){
       <div class="small">手札: ${babaHands[i]?.length || 0}枚</div>
     `;
     slot.appendChild(panel);
+    
+    // ------------------------------------------------------------------
+    // 人間プレイヤーのターン時の表示（※手札はスロット内に置かない）
+    // -----------------------------------------------------------------
     if(i === turnIndex && playerConfig[i].type==='human'){
-      const handRow = document.createElement('div');
-      handRow.className='hand-row';
-      babaHands[i].forEach((c,hi)=>{
-        const card = document.createElement('div');
-        card.className=`hand-card ${c.type==='joker'?'joker':''} selectable ${ownSelected.some(s=>s.hi===hi)?'selected':''}`;
-        card.textContent = c.text || formatEq(c.a,c.b);
-        card.onclick=()=>onOwnCardClick(i,hi);
-        handRow.appendChild(card);
-      });
-      panel.appendChild(handRow);
-      const discardArea = document.createElement('div');
-      discardArea.style.marginTop='10px';
-      const discardBtn = document.createElement('button');
-      discardBtn.textContent='選択した2枚を捨てる';
-      discardBtn.onclick=()=>confirmDiscard();
-      discardArea.appendChild(discardBtn);
-      panel.appendChild(discardArea);
-    } else if(i !== turnIndex && playerConfig[turnIndex] && playerConfig[turnIndex].type==='human'){
-      const drawBtn = document.createElement('button');
-      drawBtn.className='draw-btn';
-      drawBtn.textContent='このプレイヤーから引く';
-      drawBtn.onclick=()=>humanDrawFrom(i);
-      panel.appendChild(drawBtn);
+      // NOTE: 手札は下部の大きな領域で表示するため、ここではボタンのみ追加
+      const controls = document.createElement('div');
+      controls.style.marginTop = '8px';
+      // 「他プレイヤーから引く」ボタンは各スロットでは表示しない（下部で操作）
+      const info = document.createElement('div');
+      info.className = 'small';
+      info.style.marginTop = '6px';
+      info.textContent = '手札は画面下部に表示されます';
+      controls.appendChild(info);
+
+      // 次のターンへボタンは、hasDrawnThisTurn が true のとき下部に表示するためここでは表示しない
+      panel.appendChild(controls);
+
+    // ------------------------------------------------------------------
+    // 他のプレイヤーのパネル表示（自分以外）: 「このプレイヤーから引く」ボタンを表示
+    // -----------------------------------------------------------------
+    } else {
+      // 【修正】「引く」ボタン: 自分のターンで且つ（ターンプレイヤーがhuman）でのみ表示されるよう元仕様に合わせる
+      if(playerConfig[turnIndex] && playerConfig[turnIndex].type==='human'){
+        const drawBtn = document.createElement('button');
+        drawBtn.className='draw-btn';
+        drawBtn.textContent='このプレイヤーから引く';
+        drawBtn.onclick=()=>humanDrawFrom(i);
+        panel.appendChild(drawBtn);
+      }
     }
     circle.appendChild(slot);
   }
 
   container.appendChild(circle);
+
+  // === 変更点: 大きな手札領域を作る（現在のターンの人間プレイヤー用） ===
+  const bigHandArea = document.createElement('div');
+  bigHandArea.className = 'big-hand-area';
+
+  // show notice if non-human or not current turn
+  if(playerConfig[turnIndex] && playerConfig[turnIndex].type==='human'){
+    const titleDiv = document.createElement('div');
+    titleDiv.style.fontWeight='700';
+    titleDiv.style.marginBottom='6px';
+    titleDiv.textContent = `${playerConfig[turnIndex].name} の手札`;
+    bigHandArea.appendChild(titleDiv);
+
+    const handRow = document.createElement('div');
+    handRow.className = 'big-hand-row';
+    const hand = babaHands[turnIndex] || [];
+    hand.forEach((c,hi)=>{
+      const card = document.createElement('div');
+      card.className = 'big-hand-card' + (ownSelected.some(s=>s.hi===hi)?' selected':'');
+      // 表示の分岐：graph/table -> ミニ表示、formula/detail -> 文字のまま
+      if(c.type === 'graph'){
+          // ミニグラフを追加
+          const mini = makeMiniGraph(c);
+          // wrap to center nicely
+          const wrap = document.createElement('div');
+          wrap.style.display='flex';
+          wrap.style.flexDirection='column';
+          wrap.style.alignItems='center';
+          wrap.style.justifyContent='center';
+          wrap.appendChild(mini);
+          // small label
+          const lbl = document.createElement('div');
+          lbl.style.fontSize='12px';
+          lbl.style.fontWeight='600';
+          lbl.style.marginTop='6px';
+          lbl.style.color = '#fff';
+          lbl.textContent = 'グラフ';
+          wrap.appendChild(lbl);
+          card.style.padding = '8px';
+          card.innerHTML = '';
+          card.appendChild(wrap);
+      } else if(c.type === 'table'){
+          const miniT = makeMiniTable(c);
+          const wrap = document.createElement('div');
+          wrap.style.display='flex';
+          wrap.style.flexDirection='column';
+          wrap.style.alignItems='center';
+          wrap.style.justifyContent='center';
+          wrap.appendChild(miniT);
+          const lbl = document.createElement('div');
+          lbl.style.fontSize='12px';
+          lbl.style.fontWeight='600';
+          lbl.style.marginTop='6px';
+          lbl.style.color = '#fff';
+          lbl.textContent = '表';
+          wrap.appendChild(lbl);
+          card.style.padding = '8px';
+          card.innerHTML = '';
+          card.appendChild(wrap);
+      } else if(c.type === 'formula'){
+          card.textContent = formatEq(c.a,c.b);
+      } else if(c.type === 'detail'){
+          card.textContent = `a=${c.a}, b=${c.b}`;
+      } else {
+          // Joker 等
+          card.textContent = c.text || formatEq(c.a,c.b);
+      }
+
+      card.onclick = ()=> {
+        // toggle selection
+        const found = ownSelected.findIndex(s=>s.hi===hi);
+        if(found !== -1) ownSelected.splice(found,1);
+        else {
+          ownSelected.push({pi:turnIndex, hi});
+          if(ownSelected.length>2) ownSelected.shift();
+        }
+        renderBabaUI(); // re-render to update selection styles
+      };
+      handRow.appendChild(card);
+    });
+    bigHandArea.appendChild(handRow);
+
+    const controls = document.createElement('div');
+    controls.className = 'big-hand-controls';
+    const discardBtn = document.createElement('button');
+    discardBtn.textContent = '選択した2枚を捨てる';
+    discardBtn.onclick = ()=> confirmDiscard();
+    controls.appendChild(discardBtn);
+
+    // 次のターンへボタン: ドロー後のみ表示（hasDrawnThisTurn）
+    if(hasDrawnThisTurn){
+      const nextBtn = document.createElement('button');
+      nextBtn.textContent = '次のターンへ';
+      nextBtn.onclick = ()=> nextTurn();
+      controls.appendChild(nextBtn);
+    }
+    bigHandArea.appendChild(controls);
+  } else {
+    // 現在ターンがCPUのときは説明を出す（手札は見えない）
+    const info = document.createElement('div');
+    info.className = 'small';
+    info.textContent = 'CPU のターンです。手札は表示されません。';
+    bigHandArea.appendChild(info);
+  }
+
+  container.appendChild(bigHandArea);
+
   if(cardArea) cardArea.appendChild(container);
   updateTurnDisplay();
 }
@@ -795,7 +1006,7 @@ function confirmDiscard(){
     ownSelected=[];
     renderBabaUI();
     showMatchModal(c1);
-    setTimeout(()=> nextTurn(), 500);
+    // nextTurn() は手動ボタンになったため、ここでは呼ばない
   } else {
     alert('選択された2枚はペアではありません');
     ownSelected=[];
@@ -803,8 +1014,11 @@ function confirmDiscard(){
   }
 }
 
+// ------------------------------------------------------------------
+// 【修正】humanDrawFrom: 引いたカードを即時表示し、手札は下部大表示へ
+// -----------------------------------------------------------------
 function humanDrawFrom(ti){
-  if(ti===turnIndex||disableClicks) return;
+  if(ti===turnIndex||disableClicks||hasDrawnThisTurn) return; 
   if(!babaHands[ti]||babaHands[ti].length===0) return;
 
   disableClicks = true;
@@ -812,34 +1026,72 @@ function humanDrawFrom(ti){
   const drawn = babaHands[ti].splice(pickIdx, 1)[0];
   babaHands[turnIndex].push(drawn);
 
-  const infoCard = document.getElementById('infoCard');
-  if(infoCard){
-    infoCard.innerHTML=`
-      <div class="card-inner" style="transform: rotateY(180deg);">
-        <div class="face back" style="background:#0c2a3d; padding:16px;">
-          <div style="font-weight:700;">${playerConfig[ti].name} から引いたカード</div>
-          <div style="margin-top:8px; font-size:18px;">${drawn.text || formatEq(drawn.a,drawn.b)}</div>
-        </div>
-      </div>
-    `;
-    infoCard.style.display='block';
+  // 【修正】文字を大きく表示するため、font-size: 40px を追加（大モーダルで表示）
+  // ただし table/graph は大ビュー（ミニではなく大きい表示）をそのまま表示する
+  let cardHtml = '';
+  if(drawn.type === 'graph'){
+      // show as large graph in unified large modal
+      cardHtml = '<div id="humanDrawLargeGraphContainer"></div>';
+  } else if(drawn.type === 'table'){
+      cardHtml = (typeof makeTableHTML === 'function') ? makeTableHTML(drawn.a, drawn.b) : `<div style="font-weight:800;font-size:36px;">${formatEq(drawn.a, drawn.b)}</div>`;
+  } else if(drawn.type === 'formula'){
+      cardHtml = `<div style="font-weight:800;font-size:40px; text-align:center;">${formatEq(drawn.a,drawn.b)}</div>`;
+  } else if(drawn.type === 'detail'){
+      cardHtml = `<div style="font-weight:800;font-size:28px; text-align:center;">a=${drawn.a}<br>b=${drawn.b}</div>`;
+  } else {
+      cardHtml = `<div style="font-weight:800;font-size:40px; text-align:center;">${drawn.text || formatEq(drawn.a,drawn.b)}</div>`;
   }
-
-  // 統一: 5秒表示（CARD_OPEN_TIME）
-  setTimeout(()=>{
-    if(infoCard) infoCard.style.display='none';
-    const pair = findFirstPairInHand(babaHands[turnIndex]);
-    if(pair){
-      const ids=[pair.i,pair.j].sort((a,b)=>b-a);
-      const c1 = babaHands[turnIndex][ids[0]];
-      ids.forEach(ix=>babaHands[turnIndex].splice(ix,1));
-      showMatchModal(c1);
-    }
-    disableClicks = false;
-    nextTurn();
-  }, CARD_OPEN_TIME);
+  
+  if(typeof showLargeHTML === 'function'){
+      // モーダルを閉じた後にドローフェーズ（捨てるフェーズ）へ移行するためのフラグを設定
+      postDrawAction = 'babaDiscardPhase';
+      showLargeHTML(`${playerConfig[ti].name} から引いたカード`, cardHtml); 
+      // if graph, draw graph into container
+      if(drawn.type === 'graph'){
+        setTimeout(()=> {
+          const container = document.getElementById('humanDrawLargeGraphContainer');
+          if(container){
+            const canvas = document.createElement('canvas');
+            canvas.width = 1200; canvas.height = 640; canvas.style.width='100%'; canvas.style.height='60vh'; canvas.style.background='#fff'; 
+            container.appendChild(canvas);
+            // draw graph on this canvas (reuse drawGraphOnCanvas if exists)
+            if(typeof drawGraphOnCanvas === 'function'){
+              drawGraphOnCanvas(drawn, canvas, 1);
+            } else {
+              // fallback to local draw
+              try {
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle='#fff'; ctx.fillRect(0,0,canvas.width,canvas.height);
+                ctx.save(); ctx.translate(canvas.width/2, canvas.height/2);
+                ctx.strokeStyle = '#1976d2'; ctx.lineWidth=3;
+                ctx.beginPath();
+                for(let px=-canvas.width/2; px<=canvas.width/2; px+=2){
+                  const gx = px/40;
+                  const gy = drawn.a*gx + drawn.b;
+                  const py = -gy * 40;
+                  if(px === -canvas.width/2) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+                }
+                ctx.stroke();
+                ctx.restore();
+              } catch(e){}
+            }
+          }
+        },50);
+      }
+  } else {
+      // フォールバック：CPU形式のモーダル表示関数があればそれを使う
+      if(typeof showCpuCard === 'function') showCpuCard(drawn);
+      postDrawAction = 'babaDiscardPhase';
+  }
+  
+  // UIを更新して、引かれたカードが手札に表示されるようにする
+  renderBabaUI(); 
+  
+  // ドロー直後は「捨てる」操作が必要になるため true にする（大手札領域に次へボタン表示）
+  hasDrawnThisTurn = true;
+  disableClicks = false;
 }
-
+// ------------------------------------------------------------------
 
 async function cpuPlayBaba(){
   const cpu = playerConfig[turnIndex];
@@ -855,10 +1107,12 @@ async function cpuPlayBaba(){
   while((!babaHands[targetIdx] || babaHands[targetIdx].length===0) && cnt<playersCount){
     targetIdx = (targetIdx+1)%playersCount; cnt++;
   }
+  // 全員が手札0の場合（通常は次のnextTurn()で検出される）
   if(!babaHands[targetIdx] || babaHands[targetIdx].length===0){
     nextTurn();
     return;
   }
+  
   const pick = randInt(babaHands[targetIdx].length);
   const drawn = babaHands[targetIdx].splice(pick,1)[0];
   babaHands[turnIndex].push(drawn);
@@ -868,6 +1122,7 @@ async function cpuPlayBaba(){
   showCpuCard(drawn);
   await waitCpuStop();
 
+  // CPUは引いた後、自動でペアを破棄する
   const pair = findFirstPairInHand(babaHands[turnIndex]);
   if(pair){
     const ids=[pair.i,pair.j].sort((a,b)=>b-a);
@@ -918,32 +1173,45 @@ function endBabaGame(loser){
   const winners = playerConfig.filter((p,i)=>p.name !== loser.name).map(p=>p.name);
   openResult(winners, 0, loser.name);
 }
+
 function nextTurn(){
   stopTurnTimer();
+  
+  // 【修正】hasDrawnThisTurnをリセット
+  hasDrawnThisTurn = false;
+
   const remainingPlayers = playerConfig.map((p,i)=>({hand:babaHands[i], length:babaHands[i]?.length || 0, index:i, name:p.name})).filter(p=>p.length > 0);
+  
+  // ゲーム終了判定: Jokerを持ったプレイヤーが最後の一人になったら終了
   if(remainingPlayers.length <= 1){
     if(remainingPlayers.length === 1 && remainingPlayers[0].hand.some(c=>c.type==='joker')){
-      endBabaGame(remainingPlayers[0]);
+      endBabaGame(remainingPlayers[0]); // Loser is the one with Joker
       return;
     }
     if(remainingPlayers.length === 0){
-      goHome();
+      // Jokerがデッキに入っていたはずなので、このケースは通常あり得ないが、念のためホームへ
+      goHome(); 
       return;
     }
   }
+
   let nextIndex = (turnIndex + 1) % players;
   let count = 0;
+  // 手札が0枚のプレイヤーをスキップ
   while((!babaHands[nextIndex] || babaHands[nextIndex].length === 0) && count < players){
     nextIndex = (nextIndex + 1) % players;
     count++;
   }
   if (count >= players) {
+      // 再度、ゲーム終了判定（念のため）
       goHome();
       return;
   }
+  
   turnIndex = nextIndex;
   renderBabaUI();
   startTurnTimer();
+  
   if(playerConfig[turnIndex] && playerConfig[turnIndex].type==='cpu'){
     cpuPlayBaba();
   }
@@ -1120,5 +1388,170 @@ playerConfig = [ {name:'P1', type:'human', strength:3}, {name:'P2', type:'cpu', 
 setCPULevel(selectedCPULevel);
 
 </script>
+
+<div id="largeCardModal" class="modal-back" style="display:none;">
+  <div class="modal" role="dialog" aria-modal="true" style="max-width:1100px; width:92vw; max-height:88vh;">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <div id="largeCardTitle" style="font-weight:800">カード</div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button id="largeZoomIn">＋</button>
+        <button id="largeZoomOut">－</button>
+        <button id="largeClose">閉じる</button>
+      </div>
+    </div>
+    <div id="largeCardBody" style="margin-top:10px; height:calc(100% - 56px); overflow:auto; background:#fff; color:#000; border-radius:8px; padding:12px;"></div>
+  </div>
+</div>
+
+<script>
+/* ==== 統合モーダル制御スクリプト（既存コードを壊さずオーバーライド） ==== */
+(function(){
+  // If cpuWaitFlag is already defined in page, reuse it; otherwise create it.
+  if (typeof window.cpuWaitFlag === 'undefined') window.cpuWaitFlag = false;
+
+  const largeModal = document.getElementById('largeCardModal');
+  const largeBody = document.getElementById('largeCardBody');
+  const largeTitle = document.getElementById('largeCardTitle');
+  const largeClose = document.getElementById('largeClose');
+  const largeZoomIn = document.getElementById('largeZoomIn');
+  const largeZoomOut = document.getElementById('largeZoomOut');
+  let largeGraphScale = 1;
+  let lastLargeGraphCard = null;
+
+  function showLargeHTML(title, html){
+    largeTitle.textContent = title||'カード';
+    largeBody.innerHTML = html;
+    largeModal.style.display = 'flex';
+    // ensure styles: white background
+    largeModal.querySelector('.modal').style.background = '#fff';
+    window.cpuWaitFlag = true;
+  }
+  
+  function closeLargeModal(){
+    largeModal.style.display = 'none';
+    largeBody.innerHTML = '';
+    window.cpuWaitFlag = false;
+    lastLargeGraphCard = null;
+    
+    // --- 【追加・修正】ドロー後の処理 ---
+    if(window.postDrawAction === 'babaDiscardPhase' && typeof window.startDiscardPhase === 'function'){
+        window.startDiscardPhase();
+    }
+    // ---------------------------------
+  }
+  
+  function showLargeGraph(card){
+    lastLargeGraphCard = card;
+    largeGraphScale = 1;
+    const canvasId = 'largeUnifiedCanvas';
+    const html = '<div style="font-weight:700;margin-bottom:8px;">' + ( (card && (card.a!==null)) ? ('y='+ (card.a===1?'x':(card.a===-1?'-x':card.a+'x')) + (card.b===0?'':''+(card.b>0?'+':'')+card.b) ) : 'JOKER') + '</div>'
+               + '<canvas id="'+canvasId+'" width="1200" height="640" style="width:100%;height:68vh;background:#fff;border-radius:6px;"></canvas>';
+    showLargeHTML('グラフ', html);
+    setTimeout(function(){
+      const canvas = document.getElementById(canvasId);
+      if(canvas) drawGraphOnCanvas(card, canvas, largeGraphScale);
+    },40);
+  }
+  function redrawLargeGraph(){
+    const canvas = document.getElementById('largeUnifiedCanvas');
+    if(canvas && canvas._cardRef) drawGraphOnCanvas(canvas._cardRef, canvas, largeGraphScale);
+  }
+  function drawGraphOnCanvas(card, canvas, scale){
+    if(!canvas) return;
+    canvas._cardRef = card;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width, h = canvas.height;
+    const UNIT = 40 * (scale||1);
+    ctx.fillStyle = '#fff'; ctx.fillRect(0,0,w,h);
+    ctx.save(); ctx.translate(w/2, h/2);
+    ctx.strokeStyle = '#eee'; ctx.lineWidth = 1;
+    const xMax = Math.ceil(w/2 / UNIT);
+    const yMax = Math.ceil(h/2 / UNIT);
+    for(let i=1;i<=xMax;i++){ const px=i*UNIT; ctx.beginPath(); ctx.moveTo(px,-h/2); ctx.lineTo(px,h/2); ctx.stroke(); ctx.beginPath(); ctx.moveTo(-px,-h/2); ctx.lineTo(-px,h/2); ctx.stroke(); }
+    for(let i=1;i<=yMax;i++){ const py=i*UNIT; ctx.beginPath(); ctx.moveTo(-w/2,py); ctx.lineTo(w/2,py); ctx.stroke(); ctx.beginPath(); ctx.moveTo(-w/2,-py); ctx.lineTo(w/2,-py); ctx.stroke(); }
+    ctx.strokeStyle = '#222'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(-w/2,0); ctx.lineTo(w/2,0); ctx.stroke(); ctx.beginPath(); ctx.moveTo(0,-h/2); ctx.lineTo(0,h/2); ctx.stroke();
+    if(card && card.a !== null && card.a !== undefined){
+      ctx.strokeStyle = '#1976d2'; ctx.lineWidth=3; ctx.beginPath(); let started=false;
+      for(let px=-w/2; px<=w/2; px+=2){
+        const gx = px/UNIT;
+        const gy = card.a * gx + card.b;
+        const py = -gy * UNIT;
+        if(!started){ ctx.moveTo(px,py); started=true; } else ctx.lineTo(px,py);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // wire buttons
+  if(largeClose) largeClose.addEventListener('click', closeLargeModal);
+  if(largeZoomIn) largeZoomIn.addEventListener('click', function(){ largeGraphScale *= 1.2; redrawLargeGraph(); });
+  if(largeZoomOut) largeZoomOut.addEventListener('click', function(){ largeGraphScale /= 1.2; redrawLargeGraph(); });
+
+  // Override/bridge existing functions if present
+  // 1) CPU card modal => use unified modal
+  window._orig_showCpuCard = window.showCpuCard || null;
+  window.showCpuCard = function(card){
+    // use unified modal
+    if(card && card.type === 'table'){
+      showLargeHTML('CPU が引いたカード（表）', (typeof makeTableHTML === 'function') ? makeTableHTML(card.a, card.b) : ('<div>'+ (card.text||'') +'</div>'));
+    } else if(card && card.type === 'graph'){
+      showLargeGraph(card);
+    } else {
+      showLargeHTML('CPU が引いたカード', '<div style="font-weight:800;font-size:40px; text-align:center;">'+(card.text || (typeof formatEq==='function'? formatEq(card.a,card.b) : ''))+'</div>');
+    }
+  };
+  // closeCpuCardModal should close unified modal
+  window._orig_closeCpuCardModal = window.closeCpuCardModal || null;
+  window.closeCpuCardModal = function(){ closeLargeModal(); };
+
+  // 2) graph modal functions -> use unified modal
+  window._orig_showGraphLarge = window.showGraphLarge || null;
+  window.showGraphLarge = function(card){ showLargeGraph(card); };
+  window._orig_closeGraph = window.closeGraph || null;
+  window.closeGraph = function(){ closeLargeModal(); };
+
+  // 3) match modal -> use unified modal and ensure cpuWaitFlag true during display
+  window._orig_showMatchModal = window.showMatchModal || null;
+  window.showMatchModal = function(card){
+    // create content: formula + table + small graph canvas
+    var html = '<div style="font-weight:800;font-size:20px;">ペア成立: ' + (typeof formatEq==='function'? formatEq(card.a,card.b) : '') + '</div>';
+    if(typeof makeTableHTML === 'function') html += '<div style="margin-top:12px;">' + makeTableHTML(card.a,card.b) + '</div>';
+    html += '<div style="margin-top:12px;"><canvas id="matchUnifiedCanvas" width="600" height="360" style="width:100%;height:240px;background:#fff;border-radius:6px;"></canvas></div>';
+    showLargeHTML('ペア成立', html);
+    // draw small graph
+    setTimeout(function(){
+      var canvas = document.getElementById('matchUnifiedCanvas');
+      if(canvas) drawGraphOnCanvas(card, canvas, 0.6);
+    },50);
+  };
+  window._orig_closeMatchModal = window.closeMatchModal || null;
+  window.closeMatchModal = function(){ closeLargeModal(); };
+
+  // 4) For infoCard (used in humanDrawFrom), change to display in unified modal too (optional)
+  window._orig_showInfoCard = null;
+  window.showInfoInLarge = function(title, html){
+    showLargeHTML(title, html);
+  };
+
+  // expose closeLargeModal for external use
+  window.closeLargeModal = closeLargeModal;
+
+  console.log('Unified large modal integration active (overrides applied).');
+
+})();
+</script>
+
+<script>
+// --- 補助: startDiscardPhase を定義（大モーダルを閉じた後に捨てフェーズへ戻す） ---
+function startDiscardPhase(){
+  // 簡易な処理: hasDrawnThisTurn が true なら画面を更新して捨てられる状態にする
+  hasDrawnThisTurn = true;
+  // 再レンダリングして「次へ」ボタン等を表示させる
+  renderBabaUI();
+}
+// --- /補助 ---
+</script>
+
 </body>
 </html>
