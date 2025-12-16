@@ -294,11 +294,11 @@ const CARD_OPEN_TIME = 5000;
 // CPU パラメータ（5段階）
 // label/ delay(ms) / memory(0..1)
 const cpuStrengthMap = {
-  1: { label: "最弱",  delay: 2600, memory: 0.0 },
-  2: { label: "弱",    delay: 1800, memory: 0.25 },
-  3: { label: "普通",  delay: 1100, memory: 0.55 },
-  4: { label: "強",    delay: 650,  memory: 0.85 },
-  5: { label: "最強",  delay: 300,  memory: 1.0 }
+  1: { label: "最弱",  delay: 3200, memory: 0.0 },   // ほぼランダム
+  2: { label: "弱",    delay: 2400, memory: 0.10 },  // たまに思い出す
+  3: { label: "普通",  delay: 1800, memory: 0.25 },  // 人と同程度
+  4: { label: "強",    delay: 1200, memory: 0.45 },  // 少し賢い
+  5: { label: "最強",  delay: 800,  memory: 0.65 }   // でも完全記憶しない
 };
 
 // 互換: 古い文字列設定 ('weak','normal','strong') をレベルに変換
@@ -1144,14 +1144,36 @@ function waitCpuStop(){
     },100);
   });
 }
-
 function showCpuCard(card){
   cpuWaitFlag = true;
   const modal = document.getElementById('cpuCardModal');
   const cont = document.getElementById('cpuCardContent');
-  if(cont) cont.innerHTML = card.text || formatEq(card.a, card.b);
+
+  if(!cont) return;
+
+  // ▼ 表示内容をカード種類で分岐
+  if(card.type === 'detail'){
+    // 傾き・切片カード → 式を出さない
+    cont.innerHTML = `
+      <div style="font-size:28px;font-weight:700;text-align:center;">
+        a = ${card.a}<br>
+        b = ${card.b}
+      </div>
+    `;
+  }else if(card.type === 'formula'){
+    cont.innerHTML = `
+      <div style="font-size:36px;font-weight:800;text-align:center;">
+        ${formatEq(card.a, card.b)}
+      </div>
+    `;
+  }else{
+    // その他（保険）
+    cont.innerHTML = card.text || formatEq(card.a, card.b);
+  }
+
   if(modal) modal.style.display='flex';
 }
+
 function closeCpuCardModal(){
   const modal = document.getElementById('cpuCardModal');
   if(modal) modal.style.display='none';
